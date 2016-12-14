@@ -1,25 +1,52 @@
-// VERSION 1.0.0
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-this.AllTabs = {
-	_events: {
-		attrModified: "TabAttrModified",
-		close: "TabClose",
-		move: "TabMove",
-		open: "TabOpen",
-		select: "TabSelect",
-		pinned: "TabPinned",
-		unpinned: "TabUnpinned"
+// VERSION 1.1.1
+Modules.UTILS = true;
+
+this.Tabs = {
+	get length() {
+		return gBrowser.tabs.length;
 	},
 
-	get tabs() {
-		return Array.filter(gBrowser.tabs, tab => Utils.isValidXULTab(tab));
+	get all() {
+		// gBrowser.tabs is a NodeList, not an array
+		return Array.filter(gBrowser.tabs, function(tab) { return !tab.closing; });
 	},
 
-	register: function(eventName, callback) {
-		Listeners.add(gBrowser.tabContainer, this._events[eventName], callback);
+	get pinned() {
+		return this.all.filter(function(tab) { return tab.pinned; });
 	},
 
-	unregister: function(eventName, callback) {
-		Listeners.remove(gBrowser.tabContainer, this._events[eventName], callback);
+	get notPinned() {
+		return this.all.filter(function(tab) { return !tab.pinned; });
+	},
+
+	get numPinned() {
+		return gBrowser._numPinnedTabs;
+	},
+
+	get visible() {
+		return gBrowser.visibleTabs;
+	},
+
+	get selected() {
+		return gBrowser.selectedTab;
+	},
+	set selected(tab) {
+		return gBrowser.selectedTab = tab;
+	},
+
+	hasHidden: function() {
+		return (this.length - Tabs.visible.length);
+	},
+
+	listen: function(eventName, listener) {
+		Listeners.add(gBrowser.tabContainer, eventName, listener);
+	},
+
+	unlisten: function(eventName, listener) {
+		Listeners.remove(gBrowser.tabContainer, eventName, listener);
 	}
 };

@@ -1,9 +1,18 @@
-// VERSION 1.1.0
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.1.4
 
 this.pageWatch = {
 	TMP: false,
+	SM: false,
 	listeners: new Set(),
 	captureChanges: false,
+	initialized: false,
+
+	kKeepSession: 3,
+	kKeepingSession: new Set([ 3 ]),
 
 	observe: function(aSubject, aTopic, aData) {
 		this.shouldReset(aSubject, aTopic);
@@ -14,7 +23,7 @@ this.pageWatch = {
 		switch(aSubject) {
 			case "page":
 				// the user changed this preference specifically, our backup is no longer valid
-				if(!this.sessionRestoreEnabled) {
+				if(this.captureChanges && !this.sessionRestoreEnabled) {
 					Prefs.pageBackup = -1;
 					this.stop();
 					if(this.TMP && Prefs["sessions.manager"]) {
@@ -26,7 +35,7 @@ this.pageWatch = {
 			case "sessions.onClose":
 			case "sessions.onStart":
 				// try to mimic from above as closely as possible
-				if(!this.sessionRestoreEnabled) {
+				if(this.captureChanges && !this.sessionRestoreEnabled) {
 					Prefs.onCloseBackup = -1;
 					Prefs.onStartBackup = -1;
 					this.stop();
@@ -47,9 +56,9 @@ this.pageWatch = {
 		for(let l of this.listeners) {
 			try {
 				if(l.observe) {
-					l.observe(aSubject, aTopic, aData);
+					l.observe(aSubject, 'pageWatch-change', aData);
 				} else {
-					l(aSubject, aTopic, aData);
+					l(aSubject, 'pageWatch-change', aData);
 				}
 			}
 			catch(ex) { Cu.reportError(ex); }
@@ -73,7 +82,15 @@ this.pageWatch = {
 	},
 
 	enableSessionRestore: function() {
+		// In case any of our dependencies failed to initialize before we need this, make sure it still "works".
 		if(this.sessionRestoreEnabled) { return; }
+
+		// If Session Manager is enabled, we don't dare mess with its preferences.
+		// Changing its settings is better done through SM's own options window.
+		if(this.SM) {
+			gSessionManager.openOptions();
+			return;
+		}
 
 		if(this.TMP && Prefs["sessions.manager"]) {
 			Prefs.onCloseBackup = Prefs["sessions.onClose"];
@@ -86,16 +103,26 @@ this.pageWatch = {
 			}
 		} else {
 			Prefs.pageBackup = Prefs.page;
-			Prefs.page = 3;
+			Prefs.page = this.kKeepSession;
 		}
 		this.start();
 	},
 
 	get sessionRestoreEnabled() {
+		this.finishInit();
+
+		// Warning on exiting Firefox makes all of our warnings/handlers superfluous.
+		if(Prefs.showQuitWarning) {
+			return true;
+		}
+
 		if(this.TMP && Prefs["sessions.manager"]) {
 			return Prefs["sessions.onClose"] != 2 && Prefs["sessions.onStart"] != 2;
 		}
-		return Prefs.page == 3;
+		if(this.SM && SessionManager.isSavingSession()) {
+			return true;
+		}
+		return this.kKeepingSession.has(Prefs.page);
 	},
 
 	get hasBackup() {
@@ -108,28 +135,47 @@ this.pageWatch = {
 	init: function() {
 		Prefs.setDefaults({ pageBackup: -1 });
 		Prefs.setDefaults({ page: 1 }, 'startup', 'browser');
+		Prefs.setDefaults({ showQuitWarning: false }, 'browser', '');
+
+		let promises = [];
 
 		// Keep track of Tab Mix Plus session preferences as well
-		AddonManager.getAddonByID('{dc572301-7619-498c-a57d-39143191b318}', (addon) => {
-			if(addon && addon.isActive) {
-				Prefs.setDefaults({
-					onCloseBackup: -1,
-					onStartBackup: -1
-				});
-				Prefs.setDefaults({
-					["sessions.manager"]: true,
-					["sessions.onClose"]: 0,
-					["sessions.onStart"]: 2
-				}, 'tabmix');
-				Prefs.listen('sessions.manager', this);
-				this.TMP = true;
-			}
+		promises.push(new Promise((resolve, reject) => {
+			AddonManager.getAddonByID('{dc572301-7619-498c-a57d-39143191b318}', (addon) => {
+				if(addon && addon.isActive) {
+					Prefs.setDefaults({
+						onCloseBackup: -1,
+						onStartBackup: -1
+					});
+					Prefs.setDefaults({
+						["sessions.manager"]: true,
+						["sessions.onClose"]: 0,
+						["sessions.onStart"]: 2
+					}, 'tabmix');
+					Prefs.listen('sessions.manager', this);
+					this.TMP = true;
+				}
+				resolve();
+			});
+		}));
+
+		// Session Manager has a few extra settings that keep the session across restarts,
+		// we need to recognize those, so wait for our Session Manager watcher to be initialized.
+		promises.push(new Promise((resolve, reject) => {
+			this.waitForSessionManagerModule = resolve;
+		}));
+
+		Promise.all(promises).then(() => {
 			this.finishInit();
 		});
 	},
 
 	finishInit: function() {
+		if(this.initialized) { return; }
+		this.initialized = true;
+
 		Prefs.listen('page', this);
+		Prefs.listen('showQuitWarning', this);
 		if(this.TMP) {
 			Prefs.listen('sessions.onClose', this);
 			Prefs.listen('sessions.onStart', this);
@@ -151,13 +197,14 @@ this.pageWatch = {
 				Prefs["sessions.onStart"] = 0;
 			}
 		} else {
-			Prefs.page = 3;
+			Prefs.page = this.kKeepSession;
 		}
 	},
 
 	uninit: function() {
 		this.stop();
 		Prefs.unlisten('page', this);
+		Prefs.unlisten('showQuitWarning', this);
 		if(this.TMP) {
 			Prefs.unlisten('sessions.onClose', this);
 			Prefs.unlisten('sessions.onStart', this);

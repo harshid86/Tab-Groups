@@ -1,211 +1,113 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
-* License, v. 2.0. If a copy of the MPL was not distributed with this
-* file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+:root {
+	--item-border-radius: 5px;
+}
+
+@media (-moz-windows-default-theme) {
+	@media	(-moz-os-version: windows-vista),
+		(-moz-os-version: windows-win7) {
+
+		:root {
+			--item-background: hsl(210,75%,92%);
+			--hover-color: rgba(98,127,134,0.2);
+		}
+	}
+}
 
 body {
 	font: message-box;
-	color: rgba(0, 0, 0, 0.6);
 	font-size: 13px;
 }
 
-#bg:not(:-moz-system-metric(windows-compositor)) {
+body:not(:-moz-system-metric(windows-compositor)) {
 	background: url("chrome://tabgroups-os/skin/grain.png") repeat scroll center top, linear-gradient(#CCD9EA, #C7D5E7) repeat scroll 0 0;
 }
 
-/* Tabs */
-
-.tab {
-	margin: 4px;
-	background-color: #E0EAF5;
+body.classic:not([lwtheme]) {
+	background-color: window;
 }
 
-html[dir=rtl] .tab {
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px rgba(255, 255, 255, 0.8) inset,
-		-1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		0 1px 1.5px rgba(4, 38, 60, 0.4);
+@media (-moz-windows-default-theme) {
+	@media	(-moz-os-version: windows-vista),
+		(-moz-os-version: windows-win7) {
+
+		body.classic:not([lwtheme]):not([darktheme]) {
+			background-color: transparent;
+		}
+
+		body.single:not([lwtheme]):not([darktheme]) {
+			--group-selector-text-color: rgb(255,255,255);
+		}
+
+		body.single:not([lwtheme]):not([darktheme]),
+		body:not([lwtheme]):not([darktheme]) #groupSelector {
+			background-color: transparent;
+		}
+
+		body:not([lwtheme]):not([darktheme]) .groupSelector .group-title {
+			padding: 14px;
+			bottom: calc(var(--group-selector-padding) - 14px);
+		}
+
+		body:not([lwtheme]):not([darktheme]) .groupSelector:not(:hover):not(.dragOver):not(.activeGroupItem) .group-title {
+			color: rgb(0,0,0);
+			text-shadow: 0 0 9px white, 0 0 9px white, 0 0 9px white, 0 0 14px white, 0 0 14px white, 0 0 14px white;
+		}
+
+		body:not([lwtheme]):not([darktheme]) .groupSelector:-moz-any(:hover,.dragOver,.activeGroupItem) .group-title {
+			text-shadow: 0 0 2px rgba(0,0,0,0.5);
+		}
+	}
 }
 
-.tab canvas,
-.cached-thumb {
-	border: 1px solid rgba(73, 99, 119, 0.3);
-}
+/* Tab Item */
 
-.thumb {
-	box-shadow: 1px 2px 0 rgba(0, 0, 0, 0.1);
-}
+@media (min-resolution: 1.1dppx) {
+	body:not([FF50]) .tab[busy]:not([progress]) .throbber,
+	body:not([FF50]) .appTabIcon[busy]:not([progress]) {
+		background-image: url("chrome://browser/skin/tabbrowser/connecting@2x.png");
+	}
 
-html[dir=rtl] .thumb {
-	box-shadow: -1px 2px 0 rgba(0, 0, 0, 0.1);
-}
+	body:not([FF48]) .tab[busy][progress] .throbber,
+	body:not([FF48]) .appTabIcon[busy][progress] {
+		background-image: url("chrome://browser/skin/tabbrowser/loading@2x.png");
+	}
 
-.favicon {
-	background-color: #E0EAF5;
-	-moz-border-end: 1px solid rgba(73, 99, 119, 0.3);
-	border-bottom: 1px solid rgba(73, 99, 119, 0.3);
-	height: 17px;
-	width: 17px;
-}
-
-.close {
-	background-image: -moz-image-rect(url("chrome://tabgroups-os/skin/close.png"), 0, 16, 16, 0);
-}
-
-.close:hover {
-	background-image: -moz-image-rect(url("chrome://tabgroups-os/skin/close.png"), 0, 32, 16, 16);
-}
-
-.close:hover:active {
-	background-image: -moz-image-rect(url("chrome://tabgroups-os/skin/close.png"), 0, 48, 16, 32);
-}
-
-.expander {
-	bottom: 6px;
-	transition-property: opacity;
-	transition-duration: 0.5s;
-	transition-timing-function: ease-out;
-}
-
-.expander:hover,
-.appTabIcon:hover {
-	transition-property: opacity;
-	transition-duration: 0.5s;
-	transition-timing-function: ease-out;
-	opacity: 1.0;
-}
-
-.favicon img:hover,
-.close img:hover,
-.expander img:hover {
-	opacity: 1;
-	border: none;
-}
-
-.tab-title {
-	bottom: -20px;
-	text-shadow: 0 1px rgba(255, 255, 255, 0.6);
-}
-
-.tab.focus {
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px #FFFFFF inset,
-		1px 0 1px #FFFFFF inset,
-		-1px 0 1px #FFFFFF inset,
-		0 0 5.5px #007ECE;
-}
-
-html[dir=rtl] .tab.focus {
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px #FFFFFF inset,
-		-1px 0 1px #FFFFFF inset,
-		1px 0 1px #FFFFFF inset,
-		0 0 5.5px #007ECE;
-}
-
-/* Tab: Zooming */
-
-.front .thumb {
-	box-shadow: none !important;
+	body[FF48]:not([FF50]) .tab[busy][progress] .throbber,
+	body[FF48]:not([FF50]) .appTabIcon[busy][progress] {
+		background-image: url("chrome://global/skin/icons/loading@2x.png");
+	}
 }
 
 /* Tab GroupItem */
 
-.groupItem {
-	background-color: #E0EAF5;
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px rgba(255, 255, 255, 0.8) inset,
-		1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		-1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		0 1px 3px rgba(4, 38, 60, 0.6);
-}
+@media (-moz-windows-default-theme) {
+	@media	(-moz-os-version: windows-vista),
+		(-moz-os-version: windows-win7) {
 
-html[dir=rtl] .groupItem {
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px rgba(255, 255, 255, 0.8) inset,
-		-1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		0 1px 3px rgba(4, 38, 60, 0.6);
-}
-
-.dragRegion {
-	background: rgba(224, 234, 245, 0.4);
-}
-
-.undo {
-	background-color: #A0A0A0;
-	box-shadow: 0px 1px 0px rgba(255,255,255,.5), 0px -1px 0px rgba(0,0,0,.24);
-	text-shadow: 0px -1px 0px rgba(255,255,255,.2);
-	color: rgba(0,0,0,.8);
-}
-
-.undo:hover {
-	background-color: #949494;
-}
-
-/* Other */
-
-input.name {
-	color: #999;
-}
-
-input.name:focus {
-	color: #555;
-}
-
-.title-container:hover input.name::-moz-placeholder {
-	color: #CCC;
+		body.classic .groupItem,
+		.expandedTray,
+		.undo:not(.inGroupSelector) {
+			border-radius: var(--item-border-radius);
+		}
+	}
 }
 
 /* Side buttons */
 
-#actions {
-	border: none;
-	background-color: #E0EAF5;
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px rgba(255, 255, 255, 0.8) inset,
-		1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		-1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		0 1px 3px rgba(4, 38, 60, 0.6);
-}
+@media (-moz-windows-default-theme) {
+	@media	(-moz-os-version: windows-vista),
+		(-moz-os-version: windows-win7) {
 
-html[dir=rtl] #actions {
-	box-shadow:
-		0 1px 0 #FFFFFF inset,
-		0 -1px 1px rgba(255, 255, 255, 0.8) inset,
-		-1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		1px 0 1px rgba(255, 255, 255, 0.8) inset,
-		0 1px 3px rgba(4, 38, 60, 0.6);
-}
+		body.classic #actions {
+			border-radius: 0 0 0 var(--item-border-radius);
+		}
 
-#exit-button {
-	background-image: -moz-image-rect(url(chrome://tabgroups-os/skin/tabview.png), 0, 90, 18, 72);
-}
-
-#exit-button[groups="0"] {
-	background-image: -moz-image-rect(url(chrome://tabgroups-os/skin/tabview.png), 0, 18, 18, 0);
-}
-
-#exit-button[groups="1"] {
-	background-image: -moz-image-rect(url(chrome://tabgroups-os/skin/tabview.png), 0, 36, 18, 18);
-}
-
-#exit-button[groups="2"] {
-	background-image: -moz-image-rect(url(chrome://tabgroups-os/skin/tabview.png), 0, 54, 18, 36);
-}
-
-#exit-button[groups="3"] {
-	background-image: -moz-image-rect(url(chrome://tabgroups-os/skin/tabview.png), 0, 72, 18, 54);
-}
-
-/* Search */
-
-#searchbox {
-	box-shadow: 0px 1px 0px rgba(255,255,255,.5), 0px -1px 0px rgba(0,0,0,1), 0px 0px 9px rgba(0,0,0,.8);
+		body.classic #actions:-moz-locale-dir(rtl) {
+			border-radius: 0 0 var(--item-border-radius) 0;
+		}
+	}
 }

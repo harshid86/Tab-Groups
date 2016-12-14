@@ -1,4 +1,8 @@
 <?xml version="1.0"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
 <?xml-stylesheet href="chrome://browser/skin/aboutSessionRestore.css" type="text/css"?>
 <!DOCTYPE html [
   <!ENTITY % htmlDTD
@@ -8,6 +12,7 @@
   <!ENTITY % options SYSTEM "chrome://tabgroups/locale/options.dtd" >
   %options;
 ]>
+
 <overlay	xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
 			xmlns:html="http://www.w3.org/1999/xhtml">
 
@@ -33,6 +38,7 @@
 			<caption label="&cat.backup.label;"/>
 			<vbox jump="backup">
 				<description>&session.backup.description;</description>
+				<description>&session.backup.description2;</description>
 				<checkbox id="paneSession-backup-alldata"
 					label="&session.backup.alldata.checkbox.label;"
 					helpbox="paneSession-alldata-helptext"/>
@@ -58,14 +64,17 @@
 				<hbox>
 					<button id="paneSession-load-button"
 						class="content-cell-item"
-						flex="1"
-						label="&session.restore.load.button;"/>
-					<button id="paneSession-migrated-button"
-						class="content-cell-item"
-						helptext="&session.restore.migrated.tooltip;"
-						flex="1"
-						hidden="true"
-						label="&session.restore.migrated.button;"/>
+						type="menu"
+						label="&session.restore.button;">
+						<menupopup id="paneSession-load-menu" position="end_before">
+							<menuseparator id="paneSession-load-separator-manual"/>
+							<menuseparator id="paneSession-load-separator-recovery"/>
+							<menuseparator id="paneSession-load-separator-upgrade"/>
+							<menuseparator id="paneSession-load-separator-sessionManager"/>
+							<menuseparator id="paneSession-load-separator-tabMixPlus"/>
+							<menuitem id="paneSession-load-from-file" label="&session.restore.from.file;"/>
+						</menupopup>
+					</button>
 				</hbox>
 				<description id="paneSession-restore-finished" hidden="true">&session.restore.finished;</description>
 				<tree id="paneSession-restore-tabList"

@@ -1,6 +1,11 @@
 <?xml version="1.0"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
 <?xml-stylesheet href="chrome://tabgroups/skin/options.css" type="text/css"?>
 <!DOCTYPE overlay SYSTEM "chrome://tabgroups/locale/options.dtd">
+
 <overlay xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
 	<richlistbox id="categories">
@@ -18,12 +23,28 @@
 
 	<prefpane id="mainPrefPane">
 		<preferences>
-			<preference id="pref-animateZoom" name="extensions.tabgroups.animateZoom" type="bool"/>
+			<preference id="pref-noWarningsAboutSession" name="extensions.tabgroups.noWarningsAboutSession" type="bool"/>
+			<preference id="pref-quickAccessButton" name="extensions.tabgroups.quickAccessButton" type="bool"/>
+			<preference id="pref-groupTitleInButton" name="extensions.tabgroups.groupTitleInButton" type="bool"/>
+			<preference id="pref-showGroupThumbs" name="extensions.tabgroups.showGroupThumbs" type="bool"/>
+			<preference id="pref-gridDynamicSize" name="extensions.tabgroups.gridDynamicSize" type="bool"/>
+			<preference id="pref-closeIfEmpty" name="extensions.tabgroups.closeIfEmpty" type="bool"/>
+			<preference id="pref-showTabCounter" name="extensions.tabgroups.showTabCounter" type="bool"/>
+			<preference id="pref-sortGroupsByName" name="extensions.tabgroups.sortGroupsByName" type="bool"/>
+			<preference id="pref-stackTabs" name="extensions.tabgroups.stackTabs" type="bool"/>
+			<preference id="pref-showThumbs" name="extensions.tabgroups.showThumbs" type="bool"/>
+			<preference id="pref-showUrls" name="extensions.tabgroups.showUrls" type="bool"/>
+			<preference id="pref-tileIcons" name="extensions.tabgroups.tileIcons" type="bool"/>
 			<preference id="pref-tabViewKeycode" name="extensions.tabgroups.tabViewKeycode" type="string"/>
 			<preference id="pref-tabViewAccel" name="extensions.tabgroups.tabViewAccel" type="bool"/>
 			<preference id="pref-tabViewShift" name="extensions.tabgroups.tabViewShift" type="bool"/>
 			<preference id="pref-tabViewAlt" name="extensions.tabgroups.tabViewAlt" type="bool"/>
 			<preference id="pref-tabViewCtrl" name="extensions.tabgroups.tabViewCtrl" type="bool"/>
+			<preference id="pref-quickAccessKeycode" name="extensions.tabgroups.quickAccessKeycode" type="string"/>
+			<preference id="pref-quickAccessAccel" name="extensions.tabgroups.quickAccessAccel" type="bool"/>
+			<preference id="pref-quickAccessShift" name="extensions.tabgroups.quickAccessShift" type="bool"/>
+			<preference id="pref-quickAccessAlt" name="extensions.tabgroups.quickAccessAlt" type="bool"/>
+			<preference id="pref-quickAccessCtrl" name="extensions.tabgroups.quickAccessCtrl" type="bool"/>
 			<preference id="pref-nextGroupKeycode" name="extensions.tabgroups.nextGroupKeycode" type="string"/>
 			<preference id="pref-nextGroupAccel" name="extensions.tabgroups.nextGroupAccel" type="bool"/>
 			<preference id="pref-nextGroupShift" name="extensions.tabgroups.nextGroupShift" type="bool"/>
@@ -41,11 +62,113 @@
 		</hbox>
 
 		<groupbox align="start" id="paneTabGroups-general" collapsed="true" data-category="paneTabGroups">
-			<caption label="&cat.general.label;"/>
-			<checkbox label="&opt.animateZoom.label2;"
-				helptext="&opt.animateZoom.tooltip;"
-				jump="animateZoom"
-				delayPreference="pref-animateZoom"/>
+			<checkbox label="&opt.showGroupThumbs.label;"
+				helptext="&opt.showGroupThumbs.tooltip;"
+				jump="showGroupThumbs"
+				delayPreference="pref-showGroupThumbs"/>
+			<checkbox label="&opt.gridDynamicSize.label;"
+				helpbox="paneTabGroups-gridDynamicSize-helptext"
+				jump="gridDynamicSize"
+				delayPreference="pref-gridDynamicSize"/>
+			<checkbox label="&opt.closeIfEmpty.label;"
+				helptext="&opt.closeIfEmpty.tooltip;"
+				jump="closeIfEmpty"
+				delayPreference="pref-closeIfEmpty"/>
+			<checkbox label="&opt.showTabCounter.label;"
+				helptext="&opt.showTabCounter.tooltip;"
+				jump="showTabCounter"
+				delayPreference="pref-showTabCounter"/>
+			<checkbox label="&opt.sortGroupsByName.label;"
+				helptext="&opt.sortGroupsByName.tooltip;"
+				jump="sortGroupsByName"
+				delayPreference="pref-sortGroupsByName"/>
+			<vbox id="paneTabGroups-gridDynamicSize-helptext" collapsed="true">
+				<description>&opt.gridDynamicSize.tooltip1;</description>
+				<description>&opt.gridDynamicSize.tooltip2;</description>
+				<description>&opt.gridDynamicSize.tooltip3;</description>
+			</vbox>
+		</groupbox>
+
+		<groupbox align="start" id="paneTabGroups-stackTabs" collapsed="true" data-category="paneTabGroups">
+			<caption label="&cat.defaults.label;"/>
+			<checkbox label="&opt.showThumbs.label;"
+				helpbox="paneTabGroups-showThumbs-helptext"
+				jump="showThumbs"
+				delayPreference="pref-showThumbs"/>
+			<checkbox label="&opt.tileIcons.label;"
+				helpbox="paneTabGroups-showThumbs-helptext"
+				jump="tileIcons"
+				dependson="pref-showThumbs"
+				delayPreference="pref-tileIcons"/>
+			<checkbox label="&opt.showUrls.label;"
+				helpbox="paneTabGroups-showThumbs-helptext"
+				jump="showUrls"
+				dependson="!pref-showThumbs"
+				delayPreference="pref-showUrls"/>
+			<vbox align="start" helpbox="paneTabGroups-stackTabs-helptext">
+				<label value="&cat.stackTabs.label;"
+					dependson="pref-showThumbs"/>
+				<radiogroup delayPreference="pref-stackTabs"
+					jump="stackTabs"
+					dependson="pref-showThumbs"
+					onsyncfrompreference="return document.getElementById(this.getAttribute('delayPreference')).value ? 'stack' : 'list';"
+					onsynctopreference="return this.value == 'stack';">
+					<hbox>
+						<radio label="&opt.stackTabs.label;"
+							class="smallindent"
+							dependson="pref-showThumbs"
+							value="stack"/>
+						<radio label="&opt.listTabs.label;"
+							class="smallindent"
+							dependson="pref-showThumbs"
+							value="list"/>
+					</hbox>
+				</radiogroup>
+			</vbox>
+			<groupbox align="start">
+				<button id="paneTabGroups-setdefaults-button"
+					label="&btn.setdefaults.label;"
+					helpbox="paneTabGroups-setdefaults-helptext"/>
+			</groupbox>
+			<vbox id="paneTabGroups-showThumbs-helptext" collapsed="true">
+				<description style="font-weight:bold;">&opt.showThumbs.label;</description>
+				<description>&opt.showThumbs.tooltip;</description>
+				<description style="font-weight:bold; margin-top:1em;">&opt.tileIcons.label;</description>
+				<description>&opt.tileIcons.tooltip;</description>
+				<description style="font-weight:bold; margin-top:1em;">&opt.showUrls.label;</description>
+				<description>&opt.showUrls.tooltip;</description>
+			</vbox>
+			<vbox id="paneTabGroups-stackTabs-helptext" collapsed="true">
+				<description>&cat.stackTabs.tooltip;</description>
+				<description style="font-weight:bold; margin-top:1em;">&opt.stackTabs.label;</description>
+				<description>&opt.stackTabs.tooltip;</description>
+				<description style="font-weight:bold; margin-top:1em;">&opt.listTabs.label;</description>
+				<description>&opt.listTabs.tooltip;</description>
+			</vbox>
+			<vbox id="paneTabGroups-setdefaults-helptext" collapsed="true">
+				<description>&btn.setdefaults.tooltip1;</description>
+				<description>&btn.setdefaults.tooltip2;</description>
+			</vbox>
+		</groupbox>
+
+		<groupbox align="start" id="paneTabGroups-toolbarbutton" collapsed="true" data-category="paneTabGroups">
+			<caption label="&cat.toolbarbutton.label;"/>
+			<checkbox label="&opt.groupTitleInButton.label;"
+				helpbox="paneTabGroups-toolbarbutton-helptext"
+				jump="groupTitleInButton"
+				delayPreference="pref-groupTitleInButton"/>
+			<checkbox label="&opt.quickAccessButton.label;"
+				helpbox="paneTabGroups-toolbarbutton-helptext"
+				jump="quickAccessButton"
+				delayPreference="pref-quickAccessButton"/>
+			<vbox id="paneTabGroups-toolbarbutton-helptext" collapsed="true">
+				<description style="font-weight:bold;">&opt.groupTitleInButton.label;</description>
+				<description>&opt.groupTitleInButton.tooltip1;</description>
+				<description>&opt.groupTitleInButton.tooltip2;</description>
+				<description style="font-weight:bold; margin-top:1em;">&opt.quickAccessButton.label;</description>
+				<description>&opt.quickAccessButton.tooltip1;</description>
+				<description>&opt.quickAccessButton.tooltip2;</description>
+			</vbox>
 		</groupbox>
 
 		<groupbox align="start" id="paneTabGroups-shortcut" collapsed="true" data-category="paneTabGroups">
@@ -58,6 +181,14 @@
 					<checkbox class="smallindent" keysetShift="tabView" delayPreference="pref-tabViewShift"/>
 					<checkbox class="smallindent" keysetCtrl="tabView" delayPreference="pref-tabViewCtrl"/>
 					<menulist class="smallindent" keyset="tabView" delayPreference="pref-tabViewKeycode"/>
+				</hbox>
+				<hbox jump="quickAccessKeycode,&opt.quickAccessKeyset.label;">
+					<label class="stretch" value="&opt.quickAccessKeyset.label;" flex="1"/>
+					<checkbox class="smallindent" keysetAccel="quickAccess" delayPreference="pref-quickAccessAccel"/>
+					<checkbox class="smallindent" keysetAlt="quickAccess" delayPreference="pref-quickAccessAlt"/>
+					<checkbox class="smallindent" keysetShift="quickAccess" delayPreference="pref-quickAccessShift"/>
+					<checkbox class="smallindent" keysetCtrl="quickAccess" delayPreference="pref-quickAccessCtrl"/>
+					<menulist class="smallindent" keyset="quickAccess" delayPreference="pref-quickAccessKeycode"/>
 				</hbox>
 				<hbox jump="nextGroupKeycode,&opt.nextGroupKeyset.label;">
 					<label class="stretch" value="&opt.nextGroupKeyset.label;" flex="1"/>
@@ -83,6 +214,10 @@
 			<vbox jump="sessionRestore">
 				<description>&sessionRestore.description;</description>
 				<vbox align="center">
+					<checkbox label="&opt.noWarningsAboutSession.label;"
+						helptext="&opt.noWarningsAboutSession.tooltip;"
+						jump="noWarningsAboutSession"
+						delayPreference="pref-noWarningsAboutSession"/>
 					<button id="paneTabGroups-sessionRestore-button"
 						class="content-cell-item"
 						label="&sessionRestore.button.label;"

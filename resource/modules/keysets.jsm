@@ -1,4 +1,8 @@
-// VERSION 2.0.1
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 2.1.0
 
 this.keysets = new Set([
 	{
@@ -10,6 +14,31 @@ this.keysets = new Set([
 		shiftPref: 'tabViewShift',
 		altPref: 'tabViewAlt',
 		ctrlPref: 'tabViewCtrl',
+
+		get keycode () { return Prefs[this.keycodePref]; },
+		get accel () { return Prefs[this.accelPref]; },
+		get shift () { return Prefs[this.shiftPref]; },
+		get alt () { return Prefs[this.altPref]; },
+		get ctrl () { return Prefs[this.ctrlPref]; },
+
+		observe: function(aSubject, aTopic, aData) {
+			this.set();
+		},
+
+		set: function() {
+			if(this.keycode != 'none') { Keysets.register(this); }
+			else { Keysets.unregister(this); }
+		}
+	},
+	{
+		id: objName+'-key-quickAccess',
+		oncommand: objName+'.quickAccess.toggle(event);',
+
+		keycodePref: 'quickAccessKeycode',
+		accelPref: 'quickAccessAccel',
+		shiftPref: 'quickAccessShift',
+		altPref: 'quickAccessAlt',
+		ctrlPref: 'quickAccessCtrl',
 
 		get keycode () { return Prefs[this.keycodePref]; },
 		get accel () { return Prefs[this.accelPref]; },

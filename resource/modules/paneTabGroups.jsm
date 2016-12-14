@@ -1,14 +1,19 @@
-// VERSION 1.0.2
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.1.0
 
 this.sessionRestore = {
 	get button() { return $('paneTabGroups-sessionRestore-button'); },
+	get groupbox() { return $('paneTabGroups-sessionRestore'); },
 
 	handleEvent: function() {
 		this.enable();
 	},
 
 	observe: function() {
-		this.updateButton();
+		this.updateGroupbox();
 	},
 
 	init: function() {
@@ -16,17 +21,18 @@ this.sessionRestore = {
 
 		Listeners.add(this.button, 'command', this);
 
-		this.updateButton();
+		this.updateGroupbox();
 	},
 
 	uninit: function() {
 		Listeners.remove(this.button, 'command', this);
 
-		pageWatch.unregister(this);
+		try { pageWatch.unregister(this); }
+		catch(ex) { /* doesn't matter */ }
 	},
 
-	updateButton: function() {
-		toggleAttribute(this.button, 'disabled', pageWatch.sessionRestoreEnabled);
+	updateGroupbox: function() {
+		this.groupbox.hidden = pageWatch.sessionRestoreEnabled;
 	},
 
 	enable: function() {
@@ -37,10 +43,28 @@ this.sessionRestore = {
 	}
 };
 
+this.setdefaults = {
+	btn: $('paneTabGroups-setdefaults-button'),
+
+	handleEvent: function() {
+		Observers.notify(objName+'-set-groups-defaults');
+	},
+
+	init: function() {
+		Listeners.add(this.btn, 'command', this);
+	},
+
+	uninit: function() {
+		Listeners.remove(this.btn, 'command', this);
+	}
+};
+
 Modules.LOADMODULE = function() {
 	sessionRestore.init();
+	setdefaults.init();
 };
 
 Modules.UNLOADMODULE = function() {
 	sessionRestore.uninit();
+	setdefaults.uninit();
 };

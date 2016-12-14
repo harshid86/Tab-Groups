@@ -1,14 +1,15 @@
-// VERSION 1.2.6
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.3.1
 
 this.migrate = {
 	migratorBackstage: null,
 
 	init: function() {
 		this.migratePrefs();
-
-		if(Services.vc.compare(Services.appinfo.version, "45.0a1") >= 0) {
-			this.skipTabGroupsMigrator();
-		}
+		this.skipTabGroupsMigrator();
 	},
 
 	uninit: function() {
@@ -20,9 +21,6 @@ this.migrate = {
 
 	migratePrefs: function() {
 		if(!Prefs.migratedPrefs) {
-			if(Services.prefs.prefHasUserValue('browser.panorama.animate_zoom')) {
-				Prefs.animateZoom = Services.prefs.getBoolPref('browser.panorama.animate_zoom');
-			}
 			if(Services.prefs.prefHasUserValue('browser.panorama.session_restore_enabled_once')) {
 				Prefs.pageAutoChanged = Services.prefs.getBoolPref('browser.panorama.session_restore_enabled_once');
 			}
@@ -63,64 +61,13 @@ this.migrate = {
 			// no-op the migration, we'll just keep using the same data in the add-on anyway
 			migrate: function() {}
 		};
-	},
-
-	onLoad: function(aWindow) {
-		// we can use our add-on even in builds with Tab View still present, we just have to properly deinitialize it
-		if(aWindow.TabView) {
-			aWindow.TabView.uninit();
-			aWindow.TabView._deck = null;
-
-			if(aWindow.gTaskbarTabGroup) {
-				aWindow.gTaskbarTabGroup.win.removeEventListener("tabviewshown", aWindow.gTaskbarTabGroup);
-				aWindow.gTaskbarTabGroup.win.removeEventListener("tabviewhidden", aWindow.gTaskbarTabGroup);
-			}
-
-			aWindow._TabView = aWindow.TabView;
-		}
-
-		// compatibility shim, for other add-ons to interact with this object more closely to the original if needed
-		aWindow.TabView = aWindow[objName].TabView;
-
-		Modules.load('keysets');
-	},
-
-	onUnload: function(aWindow) {
-		if(UNLOADED) {
-			Modules.unload('keysets');
-		}
-
-		if(aWindow._TabView) {
-			aWindow.TabView = aWindow._TabView;
-			delete aWindow._TabView;
-
-			aWindow.TabView.init();
-
-			if(aWindow.gTaskbarTabGroup) {
-				aWindow.gTaskbarTabGroup.win.addEventListener("tabviewshown", aWindow.gTaskbarTabGroup);
-				aWindow.gTaskbarTabGroup.win.addEventListener("tabviewhidden", aWindow.gTaskbarTabGroup);
-			}
-		}
-		else {
-			delete aWindow.TabView;
-		}
 	}
 };
 
 Modules.LOADMODULE = function() {
-	// disables native TabView command and hides native menus and buttons and stuff through CSS.
-	// can be removed in Firefox 45 (once bug 1222490 lands)
-	if(Services.vc.compare(Services.appinfo.version, "45.0a1") < 0) {
-		Overlays.overlayURI('chrome://browser/content/browser.xul', 'migrate', migrate);
-	}
-
 	migrate.init();
 };
 
 Modules.UNLOADMODULE = function() {
 	migrate.uninit();
-
-	if(Services.vc.compare(Services.appinfo.version, "45.0a1") < 0) {
-		Overlays.removeOverlayURI('chrome://browser/content/browser.xul', 'migrate');
-	}
 };

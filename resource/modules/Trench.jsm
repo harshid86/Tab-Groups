@@ -1,4 +1,8 @@
-// VERSION 1.0.2
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.1.4
 
 // Class: Trench - Class for drag-snapping regions; called "trenches" as they are long and narrow.
 // Parameters:
@@ -11,7 +15,6 @@ this.Trench = function(element, xory, type, edge) {
 	this.id = Trenches.nextId++;
 
 	//   element - (DOMElement)
-	//   parentItem - <Item> which projects this trench; to be set with setParentItem
 	//   xory - (string) "x" or "y"
 	//   type - (string) "border" or "guide"
 	//   edge - (string) "top", "left", "bottom", or "right"
@@ -21,10 +24,8 @@ this.Trench = function(element, xory, type, edge) {
 	this.type = type; // "border" or "guide"
 	this.edge = edge; // "top", "left", "bottom", or "right"
 
-	this.$el = iQ(this.el);
-
-	// (array) DOM elements for visible reflexes of the Trench
-	this.dom = [];
+	// DOM elements for visible reflexes of the Trench
+	this.dom = {};
 
 	// (boolean) Whether this trench will project a visible guide (dotted line) or not.
 	this.showGuide = false;
@@ -32,7 +33,7 @@ this.Trench = function(element, xory, type, edge) {
 	// (boolean) Whether this trench is currently active or not.
 	// Basically every trench aside for those projected by the Item currently being dragged all become active.
 	this.active = false;
-	this.gutter = Items.defaultGutter;
+	this.gutter = GroupItems.defaultGutter;
 
 	// (integer) position is the position that we should snap to.
 	this.position = 0;
@@ -51,14 +52,6 @@ this.Trench.prototype = {
 		return this.customRadius || Trenches.defaultRadius;
 	},
 
-	setParentItem: function(item) {
-		if(!item.isAnItem) {
-			return false;
-		}
-		this.parentItem = item;
-		return true;
-	},
-
 	// set the trench's position.
 	// Parameters:
 	//   position - (integer) px center position of the trench
@@ -67,7 +60,7 @@ this.Trench.prototype = {
 	setPosition: function(position, range, minRange) {
 		this.position = position;
 
-		let page = Items.getPageBounds(true);
+		let page = UI.getPageBounds();
 
 		// optionally, set the range.
 		if(Utils.isRange(range)) {
@@ -174,17 +167,19 @@ this.Trench.prototype = {
 	// If <active> is false, the entire trench will be very translucent.
 	show: function() { // DEBUG
 		if(this.active && this.showGuide) {
-			if(!this.dom.guideTrench) {
-				this.dom.guideTrench = iQ("<div/>").addClass('guideTrench').css({ id: 'guideTrench'+this.id });
-			}
 			let guideTrench = this.dom.guideTrench;
-			guideTrench.css(this.guideRect);
-			iQ("body").append(guideTrench);
-		} else {
-			if(this.dom.guideTrench) {
-				this.dom.guideTrench.remove();
-				delete this.dom.guideTrench;
+			if(!guideTrench) {
+				guideTrench = document.createElement('div');
+				guideTrench.classList.add('guideTrench');
+				guideTrench.id = 'guideTrench'+this.id;
+				this.dom.guideTrench = guideTrench;
 			}
+			iQ(guideTrench).css(this.guideRect);
+			GroupItems.workSpace.appendChild(guideTrench);
+		}
+		else if(this.dom.guideTrench) {
+			this.dom.guideTrench.remove();
+			delete this.dom.guideTrench;
 		}
 
 		if(!Trenches.showDebug) {
@@ -192,32 +187,34 @@ this.Trench.prototype = {
 			return;
 		}
 
-		if(!this.dom.visibleTrench) {
-			this.dom.visibleTrench = iQ("<div/>")
-				.addClass('visibleTrench')
-				.addClass(this.type) // border or guide
-				.css({ id: 'visibleTrench'+this.id });
-		}
 		let visibleTrench = this.dom.visibleTrench;
-
-		if(!this.dom.activeVisibleTrench) {
-			this.dom.activeVisibleTrench = iQ("<div/>")
-				.addClass('activeVisibleTrench')
-				.addClass(this.type) // border or guide
-				.css({ id: 'activeVisibleTrench'+this.id });
+		if(!visibleTrench) {
+			visibleTrench = document.createElement('div');
+			visibleTrench.classList.add('visibleTrench');
+			visibleTrench.classList.add(this.type); // border or guide
+			visibleTrench.id = 'visibleTrench'+this.id;
+			this.dom.visibleTrench = visibleTrench;
 		}
+
 		let activeVisibleTrench = this.dom.activeVisibleTrench;
+		if(!activeVisibleTrench) {
+			activeVisibleTrench = document.createElement('div');
+			activeVisibleTrench.classList.add('activeVisibleTrench');
+			activeVisibleTrench.classList.add(this.type); // border or guide
+			activeVisibleTrench.id = 'activeVisibleTrench'+this.id;
+			this.dom.activeVisibleTrench = activeVisibleTrench
+		}
 
 		if(this.active) {
-			activeVisibleTrench.addClass('activeTrench');
+			activeVisibleTrench.classList.add('activeTrench');
 		} else {
-			activeVisibleTrench.removeClass('activeTrench');
+			activeVisibleTrench.classList.remove('activeTrench');
 		}
 
-		visibleTrench.css(this.rect);
-		activeVisibleTrench.css(this.activeRect || this.rect);
-		iQ("body").append(visibleTrench);
-		iQ("body").append(activeVisibleTrench);
+		iQ(visibleTrench).css(this.rect);
+		iQ(activeVisibleTrench).css(this.activeRect || this.rect);
+		GroupItems.workSpace.appendChild(visibleTrench);
+		GroupItems.workSpace.appendChild(activeVisibleTrench);
 	},
 
 	// Hide the trench.
@@ -242,11 +239,10 @@ this.Trench.prototype = {
 	//   stationaryCorner   - which corner is stationary? by default, the top left.
 	//                        "topleft", "bottomleft", "topright", "bottomright"
 	//   assumeConstantSize - (boolean) whether the rect's dimensions are sacred or not
-	//   keepProportional - (boolean) if we are allowed to change the rect's size, whether the dimensions should scaled proportionally or not.
 	// Returns:
 	//   false - if rect does not overlap with this trench
 	//   newRect - (<Rect>) an adjusted version of rect, if it is affected by this trench
-	rectOverlaps: function(rect,stationaryCorner,assumeConstantSize,keepProportional) {
+	rectOverlaps: function(rect, stationaryCorner, assumeConstantSize) {
 		let edgeToCheck;
 		if(this.type == "border") {
 			switch(this.edge) {
@@ -290,9 +286,6 @@ this.Trench.prototype = {
 						rect.left = this.position - rect.width;
 					} else {
 						let newWidth = this.position - rect.left;
-						if(keepProportional) {
-							rect.height = rect.height * newWidth / rect.width;
-						}
 						rect.width = newWidth;
 					}
 					return rect;
@@ -315,9 +308,6 @@ this.Trench.prototype = {
 						rect.top = this.position - rect.height;
 					} else {
 						let newHeight = this.position - rect.top;
-						if(keepProportional) {
-							rect.width = rect.width * newHeight / rect.height;
-						}
 						rect.height = newHeight;
 					}
 					return rect;
@@ -373,13 +363,12 @@ this.Trench.prototype = {
 		// only guide-type trenches need to set a separate active range
 		if(this.type != 'guide') { return; }
 
-		let groupItems = GroupItems.groupItems;
-		groupItems.forEach((groupItem) => {
+		for(let groupItem of GroupItems) {
 			// floating groupItems don't block trenches
-			if(groupItem.isDragging) { return; }
+			if(groupItem.isDragging || groupItem.isResizing) { continue; }
 
 			// groupItems don't block their own trenches
-			if(this.el == groupItem.container) { return; }
+			if(this.el == groupItem.container) { continue; }
 
 			let bounds = groupItem.getBounds();
 			let activeRange = new Range();
@@ -406,7 +395,7 @@ this.Trench.prototype = {
 					this.setActiveRange(activeRange);
 				}
 			}
-		});
+		}
 	}
 };
 
@@ -425,15 +414,15 @@ this.Trenches = {
 	//   preferTop - (boolean) prefer snapping to the top to the bottom
 	//   preferLeft - (boolean) prefer snapping to the left to the right
 	preferTop: true,
-	get preferLeft() { return !UI.rtl; },
+	get preferLeft() { return !RTL; },
 
-	trenches: [],
+	trenches: new Map(),
 
 	// Return the specified <Trench>.
 	// Parameters:
 	//   id - (integer)
 	getById: function(id) {
-		return this.trenches[id];
+		return this.trenches.get(id);
 	},
 
 	// Register a new <Trench> and returns the resulting <Trench> ID.
@@ -443,7 +432,7 @@ this.Trenches = {
 	//   id - (int) the new <Trench>'s ID.
 	register: function(element, xory, type, edge) {
 		let trench = new Trench(element, xory, type, edge);
-		this.trenches[trench.id] = trench;
+		this.trenches.set(trench.id, trench);
 		return trench.id;
 	},
 
@@ -456,15 +445,15 @@ this.Trenches = {
 	registerWithItem: function(item, type) {
 		let container = item.container;
 		let ids = {};
-		ids.left = Trenches.register(container, "x", type, "left");
-		ids.right = Trenches.register(container, "x", type, "right");
-		ids.top = Trenches.register(container, "y", type, "top");
-		ids.bottom = Trenches.register(container, "y", type, "bottom");
+		ids.left = this.register(container, "x", type, "left");
+		ids.right = this.register(container, "x", type, "right");
+		ids.top = this.register(container, "y", type, "top");
+		ids.bottom = this.register(container, "y", type, "bottom");
 
-		this.getById(ids.left).setParentItem(item);
-		this.getById(ids.right).setParentItem(item);
-		this.getById(ids.top).setParentItem(item);
-		this.getById(ids.bottom).setParentItem(item);
+		this.getById(ids.left).parentItem = item;
+		this.getById(ids.right).parentItem = item;
+		this.getById(ids.top).parentItem = item;
+		this.getById(ids.bottom).parentItem = item;
 
 		return ids;
 	},
@@ -476,41 +465,43 @@ this.Trenches = {
 		if(!Array.isArray(ids)) {
 			ids = [ids];
 		}
-		ids.forEach((id) => {
-			this.trenches[id].hide();
-			delete this.trenches[id];
-		});
+		for(let id of ids) {
+			if(this.trenches.has(id)) {
+				this.trenches.get(id).hide();
+				this.trenches.delete(id);
+			}
+		}
 	},
 
 	// Activate all <Trench>es other than those projected by the current element.
 	// Parameters:
 	//   element - (DOMElement) the DOM element of the Item being dragged or resized.
 	activateOthersTrenches: function(element) {
-		this.trenches.forEach(function(t) {
-			if(t.el === element) { return; }
-			if(t.parentItem && (t.parentItem.isAFauxItem || t.parentItem.isDragging)) { return; }
+		for(let t of this.trenches.values()) {
+			if(t.el === element) { continue; }
+			if(t.parentItem && (t.parentItem.isAFauxItem || t.parentItem.isDragging || t.parentItem.isResizing)) { continue; }
 
 			t.active = true;
 			t.calculateActiveRange();
 			t.show(); // debug
-		});
+		}
 	},
 
 	// After <activateOthersTrenches>, disactivates all the <Trench>es again.
 	disactivate: function() {
-		this.trenches.forEach(function(t) {
+		for(let t of this.trenches.values()) {
 			t.active = false;
 			t.showGuide = false;
 			t.show();
-		});
+		}
 	},
 
 	// Hide all guides (dotted lines) en masse.
 	hideGuides: function() {
-		this.trenches.forEach(function(t) {
+		for(let t of this.trenches.values()) {
 			t.showGuide = false;
 			t.show();
-		});
+		}
 	},
 
 	// Used to "snap" an object's bounds to active trenches and to the edge of the window.
@@ -520,11 +511,10 @@ this.Trenches = {
 	//   stationaryCorner   - which corner is stationary? by default, the top left.
 	//                        "topleft", "bottomleft", "topright", "bottomright"
 	//   assumeConstantSize - (boolean) whether the rect's dimensions are sacred or not
-	//   keepProportional   - (boolean) if we are allowed to change the rect's size, whether the dimensions should scaled proportionally or not.
 	// Returns:
 	//   (<Rect>) - the updated bounds, if they were updated
 	//   false - if the bounds were not updated
-	snap: function(rect,stationaryCorner,assumeConstantSize,keepProportional) {
+	snap: function(rect, stationaryCorner, assumeConstantSize) {
 		// hide all the guide trenches, because the correct ones will be turned on later.
 		Trenches.hideGuides();
 
@@ -532,14 +522,13 @@ this.Trenches = {
 		let updatedX = false;
 		let updatedY = false;
 
-		let snappedTrenches = {};
+		let snappedTrenches = new Map();
 
-		for(let i in this.trenches) {
-			let t = this.trenches[i];
+		for(let t of this.trenches.values()) {
 			if(!t.active) { continue; }
 
 			// newRect will be a new rect, or false
-			let newRect = t.rectOverlaps(rect,stationaryCorner,assumeConstantSize,keepProportional);
+			let newRect = t.rectOverlaps(rect, stationaryCorner, assumeConstantSize);
 
 			// if rectOverlaps returned an updated rect...
 			if(newRect) {
@@ -552,7 +541,7 @@ this.Trenches = {
 				updated = true;
 
 				// register this trench as the "snapped trench" for the appropriate edge.
-				snappedTrenches[newRect.adjustedEdge] = t;
+				snappedTrenches.set(newRect.adjustedEdge, t);
 
 				// if updatedX, we don't need to update x any more.
 				if(newRect.adjustedEdge == "left" && this.preferLeft) {
@@ -581,9 +570,9 @@ this.Trenches = {
 
 	// <Trench.show> all <Trench>es.
 	show: function() {
-		this.trenches.forEach(function(t) {
+		for(let t of this.trenches.values()) {
 			t.show();
-		});
+		}
 	},
 
 	// Toggle <Trenches.showDebug> and trigger <Trenches.show>

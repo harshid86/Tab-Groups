@@ -1,16 +1,55 @@
-// VERSION 1.0.4
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.1.14
 
 this.paneSession = {
 	manualAction: false,
 	migratedBackupFile: null,
+	_deferredPromises: new Set(),
+	_quickaccess: null,
+
+	filestrings: {
+		manual: objName+'-manual'
+	},
+
+	filenames: {
+		previous: /^previous.js$/,
+		recovery: /^recovery.js$/,
+		recoveryBackup: /^recovery.bak$/,
+		upgrade: /^upgrade.js-[0-9]{14}$/,
+		tabMixPlus: /^tabmix_sessions-[0-9]{4}-[0-9]{2}-[0-9]{2}.rdf$/,
+		manual: /^tabGroups-manual-[0-9]{8}-[0-9]{6}.json$/,
+		update: /^tabGroups-update.js-[0-9]{13,14}$/
+	},
+
+	// some things needed to import from Session Manager files
+	SessionIo: null,
+	FileUtils: null,
+	Utils: null,
+
+	// some things needed to import from tab mix plus sessions
+	TabmixSessionManager: null,
+	TabmixConvertSession: null,
+	RDFService: null,
+
+	// backups are placed in profileDir/sessionstore-backups folder by default, where all other session-related backups are saved
+	get backupsPath() {
+		delete this.backupsPath;
+		let profileDir = OS.Constants.Path.profileDir;
+		this.backupsPath = OS.Path.join(profileDir, "sessionstore-backups");
+		return this.backupsPath;
+	},
 
 	get alldataCheckbox() { return $('paneSession-backup-alldata'); },
 	get alldata() { return this.alldataCheckbox.checked; },
 
 	get backupBtn() { return $('paneSession-backup-button'); },
-	get loadBtn() { return $('paneSession-load-button'); },
-	get migratedBtn() { return $('paneSession-migrated-button'); },
 	get importBtn() { return $('paneSession-import-button'); },
+	get loadFromFile() { return $('paneSession-load-from-file'); },
+	get backups() { return $('paneSession-load-menu'); },
+
 	get clearBtn1() { return $('paneSession-clear-button-1'); },
 	get clearBtn2() { return $('paneSession-clear-button-2'); },
 	get clearBtn3() { return $('paneSession-clear-button-3'); },
@@ -33,7 +72,7 @@ this.paneSession = {
 						this.backup();
 						break;
 
-					case this.loadBtn:
+					case this.loadFromFile:
 						this.loadBackup();
 						break;
 
@@ -46,18 +85,18 @@ this.paneSession = {
 					case this.clearBtn3:
 						this.clearData();
 						break;
-
-					case this.migratedBtn:
-						this.loadSessionFile(this.migratedBackupFile);
-						break;
 				}
 				break;
 
 			// tree handlers
 			case 'keydown':
-				switch(e.keyCode) {
-					case e.DOM_VK_SPACE:
-					case e.DOM_VK_RETURN:
+				switch(e.key) {
+					case " ":
+						// Don't scroll the page when un/checking an item.
+						e.preventDefault();
+						// no break; continue to "Enter"
+
+					case "Enter":
 						this.toggleRowChecked(this.tabList.currentIndex);
 						break;
 				}
@@ -73,22 +112,25 @@ this.paneSession = {
 					this.toggleRowChecked(cell.row);
 				}
 				break;
+
+			case 'popupshowing':
+				this.buildBackupsMenu();
+				break;
 		}
 	},
 
 	init: function() {
 		Listeners.add(this.alldataCheckbox, 'command', this);
 		Listeners.add(this.backupBtn, 'command', this);
-		Listeners.add(this.loadBtn, 'command', this);
+		Listeners.add(this.loadFromFile, 'command', this);
+		Listeners.add(this.backups, 'popupshowing', this);
 		Listeners.add(this.importBtn, 'command', this);
 		Listeners.add(this.clearBtn1, 'command', this);
 		Listeners.add(this.clearBtn2, 'command', this);
 		Listeners.add(this.clearBtn3, 'command', this);
-		Listeners.add(this.tabList, 'keydown', this);
+		Listeners.add(this.tabList, 'keydown', this, true);
 		Listeners.add(this.tabList, 'click', this);
 		Listeners.add(this.tabList, 'dblclick', this);
-
-		this.checkMigrationBackup();
 	},
 
 	uninit: function() {
@@ -96,21 +138,19 @@ this.paneSession = {
 
 		Listeners.remove(this.alldataCheckbox, 'command', this);
 		Listeners.remove(this.backupBtn, 'command', this);
-		Listeners.remove(this.loadBtn, 'command', this);
-		Listeners.remove(this.migratedBtn, 'command', this);
+		Listeners.remove(this.loadFromFile, 'command', this);
+		Listeners.remove(this.backups, 'popupshowing', this);
 		Listeners.remove(this.importBtn, 'command', this);
 		Listeners.remove(this.clearBtn1, 'command', this);
 		Listeners.remove(this.clearBtn2, 'command', this);
 		Listeners.remove(this.clearBtn3, 'command', this);
-		Listeners.remove(this.tabList, 'keydown', this);
+		Listeners.remove(this.tabList, 'keydown', this, true);
 		Listeners.remove(this.tabList, 'click', this);
 		Listeners.remove(this.tabList, 'dblclick', this);
 	},
 
 	backup: function() {
-		controllers.showFilePicker(Ci.nsIFilePicker.modeSave, objName, (aFile) => {
-			let { TextEncoder, OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
-
+		controllers.showFilePicker(Ci.nsIFilePicker.modeSave, this.filestrings.manual, (aFile) => {
 			let state = SessionStore.getCurrentState();
 			let save;
 
@@ -123,6 +163,7 @@ this.paneSession = {
 				// We'll skip closed windows and tabs, at least for now, I think this will work for most use cases though.
 				let saveData = {
 					version: [ objName, 1 ],
+					session: state.session,
 					windows: []
 				};
 
@@ -134,51 +175,53 @@ this.paneSession = {
 							extData: {}
 						};
 
-						try {
+						if(Array.isArray(win.tabs)) {
 							for(let tab of win.tabs) {
-								// don't save tab history, only the latest (current) visible entry
-								let i = tab.index -1;
-								let current = tab.entries[i];
+								try {
+									// don't save tab history, only the latest (current) visible entry
+									let i = tab.index -1;
+									let current = tab.entries[i];
 
-								let saveTab = {
-									entries: [ {
-										url: current.url,
-										title: current.title,
-										charset: current.charset,
-										ID: current.ID,
-										persist: current.persist
-									} ],
-									lastAccessed: "0",
-									hidden: tab.hidden,
-									attributes: {},
-									extData: {},
-									index: 1
-								};
+									let saveTab = {
+										entries: [ {
+											url: current.url,
+											title: current.title,
+											charset: current.charset,
+											ID: current.ID,
+											persist: current.persist
+										} ],
+										lastAccessed: "0",
+										hidden: tab.hidden,
+										attributes: {},
+										extData: {},
+										index: 1
+									};
 
-								if(tab.lastAccessed) {
-									saveTab.lastAccessed = tab.lastAccessed;
-								}
-								if(tab.pinned) {
-									saveTab.pinned = tab.pinned;
-								}
-								if(tab.extData) {
-									for(let x in tab.extData) {
-										saveTab.extData[x] = tab.extData[x];
+									if(tab.lastAccessed) {
+										saveTab.lastAccessed = tab.lastAccessed;
 									}
-								}
-								if(tab.attributes) {
-									for(let x in tab.attributes) {
-										saveTab.attributes[x] = tab.attributes[x];
+									if(tab.pinned) {
+										saveTab.pinned = tab.pinned;
 									}
-								}
-								if(tab.image) {
-									saveTab.image = tab.image;
-								}
+									if(tab.extData) {
+										for(let x in tab.extData) {
+											saveTab.extData[x] = tab.extData[x];
+										}
+									}
+									if(tab.attributes) {
+										for(let x in tab.attributes) {
+											saveTab.attributes[x] = tab.attributes[x];
+										}
+									}
+									if(tab.image) {
+										saveTab.image = tab.image;
+									}
 
-								winData.tabs.push(saveTab);
+									winData.tabs.push(saveTab);
+								}
+								catch(ex) { Cu.reportError(ex); }
 							}
 						}
-						catch(ex) { Cu.reportError(ex); }
 
 						if(win.extData) {
 							if(win.extData[Storage.kGroupIdentifier]) {
@@ -200,98 +243,404 @@ this.paneSession = {
 				ref.write(save).then(() => {
 					ref.close();
 
-					// Load the newly created file in the Restore Tab Groups block, so that the user can confirm all the tabs and groups were backed up properly.
-					// We read from the newly created file so that we're sure to show the info that was actually saved, and not the info that's still in memory.
-					OS.File.open(aFile.path, { read: true }).then((ref) => {
-						ref.read().then((savedState) => {
-							ref.close();
-
-							this.manualAction = false;
-							this.readState(savedState);
-						});
-					});
+					// Load the newly created file in the Restore Tab Groups block,
+					// so that the user can confirm all the tabs and groups were backed up properly.
+					// We read from the newly created file so that we're sure to show the info that was actually saved,
+					// and not the info that's still in memory.
+					this.loadSessionFile(aFile, false);
 				});
 			});
-		});
+		}, this.backupsPath);
 	},
 
-	// if Firefox created its migration backup when it updated to 45, we can add a helper button to load it directly,
-	// so users can import back their groups easily
-	checkMigrationBackup: function() {
-		// the backup is placed in the profile folder by default
-		let { OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
-		let dest = Services.dirsvc.get("ProfD", Ci.nsIFile);
-		dest.append("tabgroups-session-backup.json");
-		OS.File.exists(dest.path).then((exists) => {
-			if(exists) {
-				this.showMigratedButton(dest);
-				return;
-			}
+	// If at any point this fails, it simply doesn't add the corresponding item to the menu
+	// (if it fails here it's unlikely it will work when actually loading groups from these files anyway).
+	buildBackupsMenu: function() {
+		// Reject any pending tasks, we'll reschedule these ops again.
+		// There's no need to clear afterwards, rejecting the promise removes it from the Set.
+		for(let deferred of this._deferredPromises) {
+			deferred.resolve();
+		}
+		this._quickaccess = new Set();
 
-			// for a time in Nightly, this backup was placed in the desktop.
-			// This whole method will probably be removed some time after FF45, when it is no longer needed; this part will probably be removed even sooner.
-			let alt = Services.dirsvc.get("Desk", Ci.nsIFile);
-			alt.append("Firefox-tabgroups-backup.json");
-			OS.File.exists(alt.path).then((altExists) => {
-				if(altExists) {
-					this.showMigratedButton(alt);
+		// Always clean up old entries.
+		let child = this.backups.firstChild;
+		while(child) {
+			let next = child.nextSibling;
+			if(!child.id) {
+				child.remove();
+			} else if(child != this.loadFromFile) {
+				child.hidden = true;
+			}
+			child = next;
+		}
+
+		let profileDir = OS.Constants.Path.profileDir;
+
+		if(Services.vc.compare(Services.appinfo.version, "52.0a1") < 0) {
+			// if Firefox created its migration backup when it updated to 45, we can add an item to load it directly,
+			// so users can import back their groups from that point easily
+			this.deferredPromise((deferred) => {
+				// the migration backup is placed in the profile folder
+				let path = OS.Path.join(profileDir, "tabgroups-session-backup.json");
+				OS.File.exists(path).then((exists) => {
+					if(exists) {
+						this.checkRecoveryFile(deferred, path, 'groupsMigrationBackup', 'upgrade');
+					}
+				});
+			});
+		}
+
+		// Don't throw immediately if any iteration fails, run all it can to add all the possible (valid) items.
+		let exn = null;
+
+		// iterate through all files in sessionstore-backups folder and add an item for each (valid) one
+		let iterator;
+		let iterating;
+		try {
+			iterator = new OS.File.DirectoryIterator(this.backupsPath);
+			iterating = iterator.forEach((file) => {
+				// a copy of the current session, for crash-protection
+				if(this.filenames.recovery.test(file.name)) {
+					this.deferredPromise((deferred) => {
+						this.checkRecoveryFile(deferred, file.path, 'sessionRecovery', 'recovery');
+					});
 				}
+				// another crash-protection of the current session
+				else if(this.filenames.recoveryBackup.test(file.name)) {
+					this.deferredPromise((deferred) => {
+						this.checkRecoveryFile(deferred, file.path, 'recoveryBackup', 'recovery');
+					});
+				}
+				// the previous session
+				else if(this.filenames.previous.test(file.name)) {
+					this.deferredPromise((deferred) => {
+						this.checkRecoveryFile(deferred, file.path, 'previousSession', 'recovery');
+					});
+				}
+				// backups made when Firefox updates itself
+				else if(this.filenames.upgrade.test(file.name)) {
+					this.deferredPromise((deferred) => {
+						this.checkRecoveryFile(deferred, file.path, 'upgradeBackup', 'upgrade');
+					});
+				}
+				// backups created when the add-on is updated
+				else if(this.filenames.update.test(file.name)) {
+					this.deferredPromise((deferred) => {
+						this.checkRecoveryFile(deferred, file.path, 'addonUpdateBackup', 'upgrade');
+					});
+				}
+				// this could be one of the backups manually created by the user, try to load it and see if we recognize it
+				else if(this.filenames.manual.test(file.name)) {
+					this.deferredPromise((deferred) => {
+						this.checkRecoveryFile(deferred, file.path, 'manualBackup', 'manual');
+					});
+				}
+			});
+		}
+		catch(ex) {
+			exn = exn || ex;
+		}
+		finally {
+			if(iterating) {
+				iterating.then(
+					function() { iterator.close(); },
+					function(reason) { iterator.close(); throw reason; }
+				);
+			}
+		}
+
+		// Let's look for Session Manager's session backups as well, since we can also import from those.
+		AddonManager.getAddonByID('{1280606b-2510-4fe0-97ef-9b5a22eafe30}', (addon) => {
+			if(addon && addon.isActive) {
+				let smiterator;
+				let smiterating;
+				if(!this.SessionIo) {
+					Cu.import("chrome://sessionmanager/content/modules/session_file_io.jsm", this);
+					Cu.import("chrome://sessionmanager/content/modules/utils.jsm", this);
+					Cu.import("resource://gre/modules/FileUtils.jsm", this);
+				}
+				let smdir = this.SessionIo.getSessionDir();
+				let smsessions = this.SessionIo.getSessions();
+				for(let session of smsessions) {
+					let path = OS.Path.join(smdir.path, session.fileName);
+					this.checkSessionManagerFile(session, path);
+				}
+			}
+		});
+
+		// Let's look for Tab Mix Plus's sessions and try to import from those as well.
+		AddonManager.getAddonByID('{dc572301-7619-498c-a57d-39143191b318}', (addon) => {
+			if(addon && addon.isActive) {
+				if(!this.TabmixSessionManager) {
+					this.TabmixSessionManager = gWindow.TabmixSessionManager;
+					this.TabmixConvertSession = gWindow.TabmixConvertSession;
+					this.RDFService = Cc["@mozilla.org/rdf/rdf-service;1"].getService(Ci.nsIRDFService);
+				}
+
+				let tmpiterator;
+				let tmpiterating;
+				let tmpdir = OS.Path.join(profileDir, "sessionbackups");
+				try {
+					tmpiterator = new OS.File.DirectoryIterator(tmpdir);
+					tmpiterating = tmpiterator.forEach((file) => {
+						if(this.filenames.tabMixPlus.test(file.name)) {
+							this.checkTabMixPlusFile(file);
+						}
+					});
+				}
+				catch(ex) {
+					exn = exn || ex;
+				}
+				finally {
+					if(tmpiterating) {
+						tmpiterating.then(
+							function() { tmpiterator.close(); },
+							function(reason) { tmpiterator.close(); throw reason; }
+						);
+					}
+				}
+			}
+		});
+
+		if(exn) { throw exn; }
+	},
+
+	// Constructs a deferred promise object to be stored in a Set() that either self-removes or can be rejected and cleaned from the outside.
+	// The executor is passed this deferred object as its single argument.
+	deferredPromise: function(executor) {
+		// This is the basis of this deferred object, with accessor methods for resolving and rejecting its promise.
+		let deferred = {
+			resolve: function() {
+				paneSession._deferredPromises.delete(this);
+				this._resolve();
+			},
+
+			reject: function(r) {
+				paneSession._deferredPromises.delete(this);
+				this._reject(r);
+			}
+		};
+
+		// Init the actual promise.
+		deferred.promise = new Promise((resolve, reject) => {
+			// Store the resolve and reject methods in the deferred object.
+			deferred._resolve = resolve;
+			deferred._reject = reject;
+
+			// Pass the deferred object to the executor, so it can resolve itself as well.
+			executor(deferred);
+		});
+
+		// Add this deferred promise to the Set() so we can keep track of it.
+		this._deferredPromises.add(deferred);
+
+		return deferred;
+	},
+
+	checkRecoveryFile: function(aDeferred, aPath, aName, aWhere) {
+		OS.File.open(aPath, { read: true }).then((ref) => {
+			ref.read().then((savedState) => {
+				ref.close();
+
+				let state = JSON.parse((new TextDecoder()).decode(savedState));
+				this.verifyState(aDeferred, state, aPath, aName, aWhere);
 			});
 		});
 	},
 
-	showMigratedButton: function(aPath) {
-		this.migratedBackupFile = aPath;
-		this.migratedBtn.hidden = false;
-		Listeners.add(this.migratedBtn, 'command', this);
+	checkSessionManagerFile: function(session, path) {
+		this.deferredPromise((deferred) => {
+			let file = new this.FileUtils.File(path);
+			this.SessionIo.readSessionFile(file, false, (state) => {
+				state = this.getStateForSessionManagerData(session, state);
+				this.verifyState(deferred, state, { file, session }, 'sessionManager', 'sessionManager');
+			});
+		});
+	},
+
+	checkTabMixPlusFile: function(aFile) {
+		let tmpDATASource;
+
+		try {
+			tmpDATASource = this.TabmixSessionManager.DATASource;
+
+			let path = OS.Path.toFileURI(aFile.path);
+			this.TabmixSessionManager.DATASource = this.RDFService.GetDataSourceBlocking(path);
+
+			// Each TMP file can hold several sessions.
+			let sessions = this.TabmixSessionManager.getSessionList();
+			for(let x of sessions.path) {
+				let session = x;
+				this.deferredPromise((deferred) => {
+					let state = this.getStateForTabMixPlusData(session);
+					this.verifyState(deferred, state, { path, session }, 'tabMixPlus', 'tabMixPlus');
+				});
+			}
+		}
+		catch(ex) {
+			Cu.reportError(ex);
+		}
+		// Always make sure we restore TMP's current session state if there's one.
+		finally {
+			if(tmpDATASource) {
+				this.TabmixSessionManager.DATASource = tmpDATASource;
+			}
+		}
+	},
+
+	getStateForSessionManagerData: function(session, data) {
+		data = data.split("\n")[4];
+		data = this.Utils.decrypt(data);
+		if(data) {
+			data = this.Utils.JSON_decode(data);
+			if(data && !data._JSON_decode_failed) {
+				// Use the timestamp from the session file header as the lastUpdate property for these files.
+				// It's more accurate (and some session files don't actually have a lastUpdate property.
+				if(!data.session) { data.session = {}; }
+				data.session.lastUpdate = session.timestamp;
+				return data;
+			}
+		}
+		return null;
+	},
+
+	getStateForTabMixPlusData: function(session) {
+		let state = this.TabmixConvertSession.getSessionState(session);
+		if(!state.tabsCount) { return state; }
+
+		// TMP doesn't retrieve a lastUpdate value here, we need to get it ourselves
+		let node = this.RDFService.GetResource(session);
+		state.session = {
+			lastUpdate: this.TabmixSessionManager.getLiteralValue(node, "timestamp", 0)
+		};
+		if(!state.session.lastUpdate) {
+			let container = this.TabmixSessionManager.initContainer(node);
+			let windowEnum = container.GetElements();
+			while(windowEnum.hasMoreElements()) {
+				let windowNode = windowEnum.getNext();
+				let timestamp = this.TabmixSessionManager.getLiteralValue(windowNode, "timestamp", 0);
+				state.session.lastUpdate = Math.max(state.session.lastUpdate, timestamp);
+			}
+		}
+
+		return state;
+	},
+
+	verifyState: function(aDeferred, aState, aFile, aName, aWhere) {
+		if(aState.session) {
+			// Some sessions may not be modified between files, so they're essentially duplicates spread out over several files.
+			// There's no need to show these in the quick access menu.
+			let stateStr = JSON.stringify(aState);
+			if(!this._quickaccess.has(stateStr)) {
+				let date = aState.session.lastUpdate;
+				this.createBackupEntry(aFile, aName, date, aWhere);
+				this._quickaccess.add(stateStr);
+			}
+		}
+		aDeferred.resolve();
+	},
+
+	createBackupEntry: function(aPath, aName, aDate, aWhere) {
+		let date = new Date(aDate).toLocaleString();
+
+		let item = document.createElement('menuitem');
+		item.setAttribute('label', Strings.get('options', aName, [ [ '$date', date ] ]));
+		item._date = aDate;
+		item.handleEvent = (e) => {
+			this.loadSessionFile(aPath, true, aWhere);
+		};
+		item.addEventListener('command', item);
+
+		// make sure we unhide the separator for this category of backup entries
+		let sibling = $('paneSession-load-separator-'+aWhere);
+		sibling.hidden = false;
+
+		// try to sort by date desc within this category
+		while(sibling.previousSibling) {
+			if(sibling.previousSibling.nodeName == 'menuseparator' || aDate <= sibling.previousSibling._date) { break; }
+			sibling = sibling.previousSibling;
+		}
+
+		this.backups.insertBefore(item, sibling);
 	},
 
 	loadBackup: function() {
 		controllers.showFilePicker(Ci.nsIFilePicker.modeOpen, null, (aFile) => {
-			this.loadSessionFile(aFile);
-		});
+			this.loadSessionFile(aFile, true);
+		}, this.backupsPath);
 	},
 
-	loadSessionFile: function(aFile) {
-		let { OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
+	loadSessionFile: function(aFile, aManualAction, aSpecial) {
+		if(aSpecial == 'sessionManager') {
+			this.SessionIo.readSessionFile(aFile.file, false, (state) => {
+				this.manualAction = aManualAction;
 
-		OS.File.open(aFile.path, { read: true }).then((ref) => {
+				state = this.getStateForSessionManagerData(aFile.session, state);
+				this.readState(state);
+			});
+			return;
+		}
+
+		if(aSpecial == 'tabMixPlus') {
+			let tmpDATASource;
+			try {
+				tmpDATASource = this.TabmixSessionManager.DATASource;
+				this.TabmixSessionManager.DATASource = this.RDFService.GetDataSourceBlocking(aFile.path);
+
+				let state = this.getStateForTabMixPlusData(aFile.session);
+				this.readState(state);
+			}
+			catch(ex) {
+				Cu.reportError(ex);
+			}
+			// Always make sure we restore TMP's current session state if there's one.
+			finally {
+				if(tmpDATASource) {
+					this.TabmixSessionManager.DATASource = tmpDATASource;
+				}
+			}
+			return;
+		}
+
+		OS.File.open(aFile.path || aFile, { read: true }).then((ref) => {
 			ref.read().then((savedState) => {
 				ref.close();
 
-				this.manualAction = true;
-				this.readState(savedState, true);
+				this.manualAction = aManualAction;
+
+				let state;
+				try {
+					state = this.getStateForData(savedState);
+				}
+				catch(ex) {
+					Cu.reportError(ex);
+
+					this.invalidNotice.hidden = false;
+					this.tabList.hidden = true;
+					return;
+				}
+				this.readState(state);
 			});
 		});
 	},
 
-	readState: function(savedState) {
-		let { TextDecoder } = Cu.import("resource://gre/modules/osfile.jsm", {});
+	getStateForData: function(data) {
+		return JSON.parse((new TextDecoder()).decode(data));
+	},
 
-		let state;
+	readState: function(state) {
 		let pinnedGroupIdx = 0;
 		let tabGroupIdx = 0;
-
-		try {
-			state = JSON.parse((new TextDecoder()).decode(savedState));
-		}
-		catch(ex) {
-			Cu.reportError(ex);
-
-			this.invalidNotice.hidden = false;
-			this.tabList.hidden = true;
-			return;
-		}
 
 		treeView.data = [];
 		for(let win of state.windows) {
 			if(!win.tabs) { continue; }
 
-			let winGroups;
 			let groups;
 			let activeGroupId;
 			try {
-				winGroups = JSON.parse(win.extData[Storage.kGroupsIdentifier]);
+				let winGroups = JSON.parse(win.extData[Storage.kGroupsIdentifier]);
 				groups = JSON.parse(win.extData[Storage.kGroupIdentifier]);
 				if(winGroups.activeGroupId in groups) {
 					activeGroupId = winGroups.activeGroupId;
@@ -307,9 +656,9 @@ this.paneSession = {
 				}
 			}
 			catch(ex) {
-				Cu.reportError(ex);
+				console.log(ex.name+': '+ex.message);
 
-				// groups data is corrupted, consider the whole window its own group
+				// groups data is corrupted or missing, consider the whole window its own group
 				activeGroupId = 1;
 				groups = {
 					1: { id: 1 }
@@ -330,7 +679,7 @@ this.paneSession = {
 						}
 					}
 					catch(ex) {
-						Cu.reportError(ex);
+						console.log(ex.name+': '+ex.message);
 
 						// I think it's possible that tabs created while TabView is closed could somehow skip the group registration.
 						// Even if not, we squeeze in any ungrouped tabs into the "current" group of that window,
@@ -452,18 +801,19 @@ this.paneSession = {
 		if(!importGroups.length) { return; }
 
 		// first make sure the TabView frame isn't initialized, we don't want it interfering
-		let root = this._getRootWindow();
-		root[objName].TabView._deinitFrame();
+		gWindow[objName].TabView._deinitFrame();
+
+		// If TMP is initialized, it could reverse the order of the imported tabs, we flip its preference temporarily to make sure it doesn't.
+		let restoreTMP = Prefs.openTabNext;
+		if(restoreTMP) {
+			Prefs.openTabNext = false;
+		}
 
 		// initialize window if necessary, just in case
-		Storage._scope.SessionStoreInternal.onLoad(root);
+		Storage._scope.SessionStoreInternal.onLoad(gWindow);
 
 		// get the next id to be used for the imported groups
-		let groups = Storage.readGroupItemData(root);
-		let groupItems = Storage.readGroupItemsData(root);
-		if(!groupItems) {
-			groupItems = {};
-		}
+		let groupItems = Storage.readGroupItemsData(gWindow) || {};
 		if(!groupItems.nextID) {
 			groupItems.nextID = 1;
 		}
@@ -481,7 +831,7 @@ this.paneSession = {
 					tab._tab.pinned = true;
 					tab._tab.hidden = false;
 
-					this.restoreTab(root, tab._tab);
+					this.restoreTab(gWindow, tab._tab);
 				}
 				continue;
 			}
@@ -491,7 +841,7 @@ this.paneSession = {
 			groupData.id = groupID;
 
 			// first append the imported group into the session data
-			Storage.saveGroupItem(root, groupData);
+			Storage.saveGroupItem(gWindow, groupData);
 			groupItems.totalNumber++;
 
 			for(let tab of group.tabs) {
@@ -504,23 +854,28 @@ this.paneSession = {
 				delete tab._tab.pinned;
 				tab._tab.hidden = true;
 
-				this.restoreTab(root, tab._tab);
+				this.restoreTab(gWindow, tab._tab);
 			}
 		}
 
 		// don't forget to insert back the updated data
-		Storage.saveGroupItemsData(root, {
+		Storage.saveGroupItemsData(gWindow, {
 			nextID: groupItems.nextID,
 			activeGroupId: groupItems.activeGroupId || null,
 			totalNumber: groupItems.totalNumber
 		});
+
+		// We can restore TMP's preferences now if it was flipped before.
+		if(restoreTMP) {
+			Prefs.openTabNext = true;
+		}
 
 		this.autoloadedNotice.hidden = true;
 		this.invalidNotice.hidden = true;
 		this.tabList.hidden = true;
 		this.importBtn.hidden = true;
 		this.importfinishedNotice.hidden = false;
-		this.importfinishedNotice.scrollIntoView()
+		this.importfinishedNotice.scrollIntoView();
 	},
 
 	restoreTab: function(win, tabData) {
@@ -594,17 +949,22 @@ this.paneSession = {
 				// The current window can't be closed, otherwise the new session data for other opened windows wouldn't be properly saved.
 				// (http://mxr.mozilla.org/mozilla-central/source/browser/components/sessionstore/SessionStore.jsm -> SessionStoreInternal.setBrowserState())
 				// Instead, we'll force an unloaded state of all tabs, since they will be forced to reload when reselected (we don't do this, SessionRestore does).
-				let root = this._getRootWindow();
-				for(let tab of root.gBrowser.tabs) {
+				for(let tab of gWindow.gBrowser.tabs) {
 					if(!tab.pinned) {
-						tab.linkedBrowser.loadURI("about:blank");
+						let browser = tab.linkedBrowser;
+						// Browser freezes when trying to load a uri into a locked tab with TMP enabled;
+						// see http://tabmixplus.org/forum/viewtopic.php?f=2&t=19506&sid=84a9d8b600b8df0b83196f70e547a75e&p=70286#p70286
+						if(gWindow.Tabmix) {
+							browser.tabmix_allowLoad = true;
+						}
+						browser.loadURI("about:blank");
 					}
 				}
 
 				let wins = [];
 				Windows.callOnAll(function(win) {
 					// don't close the current window
-					if(win != root) {
+					if(win != gWindow) {
 						wins.unshift(win);
 					}
 				}, 'navigator:browser');
@@ -698,18 +1058,6 @@ this.paneSession = {
 		}
 
 		tabs.splice(i, 1);
-	},
-
-	_getRootWindow: function() {
-		// investigate when exactly I can use windowRoot
-		return window.windowRoot
-			? window.windowRoot.ownerGlobal
-			: window.QueryInterface(Ci.nsIInterfaceRequestor)
-				.getInterface(Ci.nsIWebNavigation)
-				.QueryInterface(Ci.nsIDocShellTreeItem)
-				.rootTreeItem
-				.QueryInterface(Ci.nsIInterfaceRequestor)
-				.getInterface(Ci.nsIDOMWindow);
 	}
 };
 

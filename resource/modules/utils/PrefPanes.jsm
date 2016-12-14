@@ -1,4 +1,8 @@
-// VERSION 1.0.13
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.1.0
 Modules.UTILS = true;
 
 // PrefPanes - handles the preferences tab and all its contents for the add-on
@@ -31,7 +35,16 @@ this.PrefPanes = {
 	previousVersion: null,
 
 	observe: function(aSubject, aTopic, aData) {
-		this.initWindow(aSubject);
+		switch(aTopic) {
+			case 'pageshow':
+				this.initWindow(aSubject);
+				break;
+
+			case 'alertclickcallback':
+				this.closeToaster();
+				this.openWhenReady();
+				break;
+		}
 	},
 
 	register: function(aPane, aModules) {
@@ -57,15 +70,6 @@ this.PrefPanes = {
 	},
 
 	init: function() {
-		// we set the add-on status in the API webpage from within the add-on itself
-		Messenger.loadInAll('utils/api');
-
-		// always add the about pane to the preferences dialog, it should be the last category in the list
-		this.register('utils/about', { paneAbout: 'utils/about' });
-
-		Browsers.callOnAll(aWindow => { this.initWindow(aWindow); }, this.chromeUri);
-		Browsers.register(this, 'pageshow', this.chromeUri);
-
 		// if defaults.js supplies an addonUUID, use it to register the about: uri linking to the add-on's preferences
 		if(addonUUID) {
 			this.aboutUri = {
@@ -78,20 +82,28 @@ this.PrefPanes = {
 					classID: Components.ID(addonUUID),
 					contractID: '@mozilla.org/network/protocol/about;1?what='+objPathString,
 					QueryInterface: XPCOMUtils.generateQI([Ci.nsIAboutModule]),
-					newChannel: function(aURI) {
-						let chan = Services.io.newChannelFromURI(this.uri);
+					newChannel: function(aURI, aLoadInfo) {
+						let chan = Services.io.newChannelFromURIWithLoadInfo(this.uri, aLoadInfo);
 						chan.originalURI = aURI;
 						return chan;
 					},
 					getURIFlags: function(aURI) { return 0; }
 				},
 
+				loaded: function() {
+					return this.manager.isContractIDRegistered(this.handler.contractID);
+				},
+
 				load: function() {
-					this.manager.registerFactory(this.handler.classID, this.handler.classDescription, this.handler.contractID, this);
+					if(!this.loaded()) {
+						this.manager.registerFactory(this.handler.classID, this.handler.classDescription, this.handler.contractID, this);
+					}
 				},
 
 				unload: function() {
-					this.manager.unregisterFactory(this.handler.classID, this);
+					if(this.loaded()) {
+						this.manager.unregisterFactory(this.handler.classID, this);
+					}
 				},
 
 				createInstance: function(outer, iid) {
@@ -103,43 +115,101 @@ this.PrefPanes = {
 			};
 			this.aboutUri.load();
 
-			Browsers.callOnAll(aWindow => { this.initWindow(aWindow); }, this.aboutUri.spec);
-			Browsers.register(this, 'pageshow', this.aboutUri.spec);
+			if(isChrome) {
+				// We still need to register the about: handler in the content process, so that web navigation works;
+				// see https://bugzilla.mozilla.org/show_bug.cgi?id=1215793#c7
+				Messenger.loadInAll('utils/PrefPanes');
+				Browsers.callOnAll(aWindow => { this.initWindow(aWindow); }, this.aboutUri.spec);
+				Browsers.register(this, 'pageshow', this.aboutUri.spec);
+			}
 		}
+
+		// In the content process we really only need to register the about: handler.
+		if(isContent) { return; }
+
+		// we set the add-on status in the API webpage from within the add-on itself
+		Messenger.loadInAll('utils/api');
+
+		// always add the about pane to the preferences dialog, it should be the last category in the list
+		this.register('utils/about', { paneAbout: 'utils/about' });
+
+		Browsers.callOnAll(aWindow => { this.initWindow(aWindow); }, this.chromeUri);
+		Browsers.register(this, 'pageshow', this.chromeUri);
 
 		// if we're in a dev version, ignore all this
 		if(AddonData.version.includes('a') || AddonData.version.includes('b')) { return; }
 
-		// if we're updating from a version without this module, try to figure out the last version
-		if(Prefs.lastVersionNotify == '0' && STARTED == ADDON_UPGRADE && AddonData.oldVersion) {
-			Prefs.lastVersionNotify = AddonData.oldVersion;
+		if(STARTED == ADDON_UPGRADE) {
+			// if we're updating from a version without this module, try to figure out the last version
+			if(Prefs.lastVersionNotify == '0' && AddonData.oldVersion) {
+				Prefs.lastVersionNotify = AddonData.oldVersion;
+			}
+
+			// Don't show notifications if the user decided not to receive any,
+			// and make sure we notify the user when updating only; when installing for the first time do nothing.
+			if(!Prefs.silentUpdates && Prefs.lastVersionNotify != '0' && Services.vc.compare(Prefs.lastVersionNotify, AddonData.version) < 0) {
+				this.previousVersion = Prefs.lastVersionNotify;
+
+				// Show the about page directly, with the release notes, if the user chose to.
+				if(Prefs.showTabOnUpdates) {
+					this.openWhenReady();
+				}
+				// Otherwise show only the notification toaster message for now,
+				// it's much less intrusive for when you can't/don't want to check the notes.
+				else {
+					this.showToaster();
+				}
+			}
 		}
 
-		// now make sure we notify the user when updating only; when installing for the first time do nothing
-		if(Prefs.showTabOnUpdates && Prefs.lastVersionNotify != '0' && Services.vc.compare(Prefs.lastVersionNotify, AddonData.version) < 0) {
-			this.previousVersion = Prefs.lastVersionNotify;
-			this.openWhenReady();
-		}
-
-		// always set the pref to the current version, this also ensures only one notification tab will open per firefox session (and not one per window)
+		// always keep this flag up to date with the current version
 		if(Prefs.lastVersionNotify != AddonData.version) {
 			Prefs.lastVersionNotify = AddonData.version;
 		}
 	},
 
 	uninit: function() {
+		if(this.aboutUri) {
+			if(isChrome) {
+				Messenger.unloadFromAll('utils/PrefPanes');
+				Browsers.unregister(this, 'pageshow', this.aboutUri.spec);
+			}
+			this.aboutUri.unload();
+		}
+
+		if(isContent) { return; }
+
 		Messenger.unloadFromAll('utils/api');
-
-		this.closeAll();
-
-		Styles.unload('PrefPanesHtmlFix');
-		Styles.unload('PrefPanesXulFix');
-
 		Browsers.unregister(this, 'pageshow', this.chromeUri);
 
-		if(this.aboutUri) {
-			Browsers.unregister(this, 'pageshow', this.aboutUri.spec);
-			this.aboutUri.unload();
+		this.closeAll();
+	},
+
+	// Show the user a notification about the add-on having been updated.
+	showToaster: function() {
+		try {
+			let icon = "chrome://"+objPathString+"/skin/icon.png";
+			let title = Strings.get('utils-toaster', 'title');
+			let text = Strings.get('utils-toaster', 'line1', [ [ '$vx', AddonData.version ] ])+'\n'+Strings.get('utils-toaster', 'line2');
+			let name = 'toast-'+objName+'-updated';
+
+			let alertsService = Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService);
+			alertsService.showAlertNotification(icon, title, text, true, "", this, name);
+		}
+		catch(ex) {
+			Cu.reportError(ex);
+		}
+	},
+
+	closeToaster: function() {
+		try {
+			let name = 'toast-'+objName+'-updated';
+
+			let alertsService = Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService);
+			alertsService.closeAlert(name);
+		}
+		catch(ex) {
+			Cu.reportError(ex);
 		}
 	},
 
@@ -149,7 +219,7 @@ this.PrefPanes = {
 		if(typeof(PrefPanes) == 'undefined') { return; }
 
 		// most recent window, if it doesn't exist yet it means we're still starting up, so give it a moment
-		var aWindow = window;
+		let aWindow = window;
 		if(!aWindow || !aWindow.SessionStore) {
 			aSync(() => { this.openWhenReady(); }, 500);
 			return;
@@ -157,7 +227,7 @@ this.PrefPanes = {
 
 		// SessionStore should have registered the window and initialized it, to ensure it doesn't overwrite our tab with any saved ones
 		// (ours will open in addition to session-saved tabs)
-		var state = JSON.parse(aWindow.SessionStore.getBrowserState());
+		let state = JSON.parse(aWindow.SessionStore.getBrowserState());
 		if(state.windows.length == 0) {
 			aSync(() => { this.openWhenReady(); }, 500);
 			return;
@@ -298,12 +368,15 @@ this.PrefPanes = {
 };
 
 Modules.LOADMODULE = function() {
-	Prefs.setDefaults({
-		lastPrefPane: '',
-		lastVersionNotify: '0',
-		showTabOnUpdates: true,
-		userNoticedTabOnUpdates: false
-	});
+	if(isChrome) {
+		// Initialize some pref dependencies.
+		Prefs.setDefaults({
+			lastPrefPane: '',
+			lastVersionNotify: '0',
+			showTabOnUpdates: false,
+			silentUpdates: false
+		});
+	}
 
 	PrefPanes.init();
 };

@@ -1,4 +1,8 @@
-// VERSION 1.1.3
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.3.3
 
 // Class: Point - A simple point.
 // If a is a Point, creates a copy of it. Otherwise, expects a to be x, and creates a Point with it along with y.
@@ -259,44 +263,47 @@ this.Range.prototype = {
 	}
 };
 
-// Class: Subscribable - A mix-in for allowing objects to collect subscribers for custom events.
-this.Subscribable = function() {
-	// we can't set the map here directly, otherwise that map would be shared across all instances based on this object, for Loki reasons...
-	this.subscribers = null;
-};
+// Subscribable - A mix-in for allowing objects to collect subscribers for custom events.
+this.Subscribable = function(obj) {
+	obj.subscribers = new Map();
 
-this.Subscribable.prototype = {
 	// The given callback will be called when the Subscribable fires the given event.
-	addSubscriber: function(eventName, callback) {
-		if(!this.subscribers) {
-			this.subscribers = new Map();
-		}
+	obj.addSubscriber = function(eventName, callback) {
 		if(!this.subscribers.has(eventName)) {
 			this.subscribers.set(eventName, new Set());
 		}
 
 		let subscribers = this.subscribers.get(eventName);
 		subscribers.add(callback);
-	},
+	};
 
 	// Removes the subscriber associated with the event for the given callback.
-	removeSubscriber: function(eventName, callback) {
-		if(!this.subscribers || !this.subscribers.has(eventName)) { return; }
+	obj.removeSubscriber = function(eventName, callback) {
+		if(!this.subscribers.has(eventName)) { return; }
 
 		let subscribers = this.subscribers.get(eventName);
 		subscribers.delete(callback);
-	},
+		if(!subscribers.size) {
+			this.subscribers.delete(eventName);
+		}
+	};
 
 	// Internal routine. Used by the Subscribable to fire events.
-	_sendToSubscribers: function(eventName, eventInfo) {
-		if(!this.subscribers || !this.subscribers.has(eventName)) { return; }
+	obj._sendToSubscribers = function(eventName, eventInfo) {
+		if(!this.subscribers.has(eventName)) { return; }
 
 		let subscribers = this.subscribers.get(eventName);
 		for(let callback of subscribers) {
-			try { callback(eventInfo); }
+			try {
+				if(typeof(callback) == 'object') {
+					callback.handleSubscription(eventName, eventInfo);
+				} else {
+					callback(eventInfo);
+				}
+			}
 			catch(ex) { Cu.reportError(ex); }
 		}
-	}
+	};
 };
 
 // Class: Utils - Singelton with common utility functions.
@@ -335,65 +342,38 @@ this.Utils = {
 		return true;
 	},
 
-	// Returns a copy of the argument. Note that this is a shallow copy; if the argument
-	// has properties that are themselves objects, those properties will be copied by reference.
-	copy: function(value) {
-		if(value && typeof(value) == 'object') {
-			if(Array.isArray(value)) {
-				return this.extend([], value);
-			}
-			return this.extend({}, value);
-		}
-		return value;
-	},
-
 	// Merge two array-like objects into the first and return it.
 	merge: function(first, second) {
 		Array.forEach(second, el => Array.push(first, el));
 		return first;
 	},
 
-	// Pass several objects in and it will combine them all into the first object and return it.
-	extend: function() {
-		// copy reference to target object
-		let target = arguments[0] || {};
+	sortReadable: function(a, b) {
+		let ax = [];
+		let bx = [];
 
-		// Handle case when target is a string or something
-		if(typeof(target) != "object" && typeof(target) != "function") {
-			target = {};
-		}
+		a.replace(/(\d+)|(\D+)/g, function(_, $1, $2) { ax.push([$1 || Infinity, $2 || ""]) });
+		b.replace(/(\d+)|(\D+)/g, function(_, $1, $2) { bx.push([$1 || Infinity, $2 || ""]) });
 
-		let length = arguments.length;
-		for(let i = 1; i < length; i++) {
-			// Only deal with non-null/undefined values
-			let options = arguments[i];
-			if(options != null) {
-				// Extend the base object
-				for(let name in options) {
-					let copy = options[name];
-
-					// Prevent never-ending loop
-					if(target === copy) { continue; }
-
-					if(copy !== undefined) {
-						target[name] = copy;
-					}
-				}
+		while(ax.length && bx.length) {
+			let an = ax.shift();
+			let bn = bx.shift();
+			let nn = (an[0] - bn[0]) || an[1].localeCompare(bn[1]);
+			if(nn) {
+				return nn;
 			}
 		}
 
-		// Return the modified object
-		return target;
+		return ax.length - bx.length;
 	}
 };
 
 // Class: MRUList - A most recently used list.
 // If a is an array of entries, creates a copy of it.
 this.MRUList = function(a) {
+	this._list = [];
 	if(Array.isArray(a)) {
-		this._list = a.concat();
-	} else {
-		this._list = [];
+		this._list.concat(a);
 	}
 };
 
@@ -402,6 +382,18 @@ this.MRUList.prototype = {
 	update: function(entry) {
 		this.remove(entry);
 		this._list.unshift(entry);
+	},
+
+	// Inserts a new item at the end of the list if its not in it already.
+	append: function(entry, force) {
+		let index = this._list.indexOf(entry);
+		if(force && index > -1) {
+			this._list.splice(index, 1);
+			index = -1;
+		}
+		if(index == -1) {
+			this._list.push(entry);
+		}
 	},
 
 	// Removes the given entry from the list.
@@ -414,19 +406,113 @@ this.MRUList.prototype = {
 
 	// Returns the most recently used entry. If a filter exists, gets the most recently used entry which matches the filter.
 	peek: function(filter) {
-		let match = null;
 		if(filter && typeof filter == "function") {
-			this._list.some(function(entry) {
+			for(let entry of this._list) {
 				if(filter(entry)) {
-					match = entry
-					return true;
+					return entry;
 				}
-				return false;
-			});
-		} else {
-			match = this._list.length > 0 ? this._list[0] : null;
+			}
+			return null;
 		}
-
-		return match;
+		return !this.isEmpty() ? this._list[0] : null;
 	},
+
+	isEmpty: function() {
+		return !this._list.length;
+	},
+
+	clear: function() {
+		this._list = [];
+	}
+};
+
+// Class: PriorityQueue - Container that returns items in a priority order
+// Current implementation assigns an item to either a high priority or low priority queue, and toggles which queue items are popped from.
+// This guarantees that high priority items which are constantly being added will not eclipse changes for lower priority items.
+// Instanciation requires a method that will be called when pushing items to the queue;
+// if this method returns true, the item is added to the high priority queue, otherwise it is added to the low priority queue.
+this.PriorityQueue = function(isHighPriority) {
+	this._isHighPriority = isHighPriority;
+
+	this._low = []; // low priority queue
+	this._high = []; // high priority queue
+};
+
+this.PriorityQueue.prototype = {
+	// Empty the update queue
+	clear: function() {
+		this._low = [];
+		this._high = [];
+	},
+
+	// Return whether pending items exist
+	hasItems: function() {
+		return (this._low.length > 0) || (this._high.length > 0);
+	},
+
+	// Returns all queued items, ordered from low to high priority
+	getItems: function() {
+		return this._high.concat(this._low);
+	},
+
+	// Add an item to be prioritized
+	push: function(item) {
+		// Push onto correct priority queue.
+		// If it already exists in the destination queue, leave it.
+		// If it exists in a different queue, remove it first and push onto new queue.
+		let highPriority = this._isHighPriority(item);
+		if(highPriority) {
+			let i = this._low.indexOf(item);
+			if(i != -1) {
+				this._low.splice(i, 1);
+			}
+			if(this._high.indexOf(item) == -1) {
+				this._high.push(item);
+			}
+		}
+		else {
+			let i = this._high.indexOf(item);
+			if(i != -1) {
+				this._high.splice(i, 1);
+			}
+			if(this._low.indexOf(item) == -1) {
+				this._low.push(item);
+			}
+		}
+	},
+
+	// Remove and return the next item in priority order
+	pop: function() {
+		if(this._high.length) {
+			return this._high.shift();
+		}
+		if(this._low.length) {
+			return this._low.shift();
+		}
+		return null;
+	},
+
+	// Return the next item in priority order, without removing it
+	peek: function() {
+		if(this._high.length) {
+			return this._high[0];
+		}
+		if(this._low.length) {
+			return this._low[0];
+		}
+		return null;
+	},
+
+	// Remove the passed item
+	remove: function(item) {
+		let i = this._high.indexOf(item);
+		if(i != -1) {
+			this._high.splice(i, 1);
+		} else {
+			i = this._low.indexOf(item);
+			if(i != -1) {
+				this._low.splice(i, 1);
+			}
+		}
+	}
 };

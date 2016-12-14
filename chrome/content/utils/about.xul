@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet href="chrome://objPathString/skin/utils/about.css"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
+<?xml-stylesheet href="chrome://objPathString/skin/utils/about.css"?>
 <!DOCTYPE html [
   <!ENTITY % htmlDTD
     PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
     "DTD/xhtml1-strict.dtd">
   %htmlDTD;
-  <!ENTITY % about SYSTEM "chrome://tabgroups/locale/utils/about.dtd" >
+  <!ENTITY % about SYSTEM "chrome://tabgroups/locale/utils-about.dtd" >
   %about;
   <!ENTITY % addon SYSTEM "chrome://tabgroups/locale/defaults.dtd" >
   %addon;
@@ -31,6 +34,7 @@
 	<prefpane id="mainPrefPane">
 		<preferences>
 			<preference id="pref-showTabOnUpdates" name="extensions.tabgroups.showTabOnUpdates" type="bool"/>
+			<preference id="pref-silentUpdates" name="extensions.tabgroups.silentUpdates" type="bool"/>
 		</preferences>
 
 		<hbox id="header-about" class="header" collapsed="true" data-category="paneAbout">
@@ -39,8 +43,8 @@
 				<label class="header-name">&about.name;</label>
 				<hbox id="version" invisible="true">
 					<label id="currentVersion">&about.version;</label>
-					<label id="uptodate" hidden="true">&nbsp;&about.versionDivider;&nbsp;&about.uptodate;</label>
-					<label id="needsupdate" hidden="true">&about.versionDivider;<html:a href="javascript:objName.about.openAddonsMgr();">&about.needsupdate;</html:a></label>
+					<label id="uptodate" hidden="true">&nbsp;-&nbsp;&about.uptodate;</label>
+					<label id="needsupdate" hidden="true">&nbsp;-&nbsp;<html:a id="openAddonsMgr" href="#">&about.needsupdate;</html:a></label>
 				</hbox>
 			</vbox>
 		</hbox>
@@ -49,12 +53,14 @@
 			<html:div class="row">
 				<html:div id="general" class="main-column">
 					<hbox id="notifyOnUpdates" class="header">
-						<hbox class="notifyOnUpdates-checkbox-container">
-							<checkbox id="showTabOnUpdates" label="&about.notifyOnUpdates;" delayPreference="pref-showTabOnUpdates"/>
-						</hbox>
+						<vbox class="notifyOnUpdates-checkbox-container">
+                            <checkbox label="&about.silentUpdates;" delayPreference="pref-silentUpdates"/>
+                            <checkbox label="&about.notifyOnUpdates;" delayPreference="pref-showTabOnUpdates" dependson="!pref-silentUpdates"/>
+						</vbox>
 					</hbox>
 					<html:p>&about.description;</html:p>
 					<html:p>&about.descriptionB;</html:p>
+					<html:p id="promo-matchhead-desc" hidden="true">&about.descriptionC;</html:p>
 					<html:p class="signature">&about.signature;</html:p>
 				</html:div>
 				<html:div id="bank" class="banked negative" invisible="true">
@@ -86,7 +92,7 @@
 			<html:div id="bottomwrapper" class="row">
 				<html:div id="releases" class="main-column">
 					<html:div id="notes"/>
-					<html:div id="divAllVersions"><html:a id="allVersions" hidden="true" href="javascript:objName.about.fillChangeLog('0');">&about.allVersions;</html:a></html:div>
+					<html:div id="divAllVersions"><html:a id="allVersions" hidden="true" href="#">&about.allVersions;</html:a></html:div>
 				</html:div>
 				<html:div id="sidebar">
 					<html:div id="info">
@@ -130,5 +136,23 @@
 			</html:div>
 		</vbox>
 	</prefpane>
+
+	<vbox id="main-wrapper">
+		<html:div id="promo-matchhead" hidden="true">
+			<html:a target="_blank" id="promo-matchhead-tab"/>
+			<html:div id="promo-matchhead-container">
+				<html:a id="promo-matchhead-anchor" target="_blank">
+					<html:div id="promo-matchhead-image"/>
+				</html:a>
+				<html:a id="promo-matchhead-hashtag" target="_blank">#matchhead</html:a>
+				<html:a id="promo-matchhead-clicktowatch" target="_blank">&about.clicktowatch;</html:a>
+				<html:div id="promo-matchhead-actions">
+					<html:a id="promo-matchhead-close" href="#">&about.hidePromo;</html:a>
+					<html:a id="promo-matchhead-hideThisPromo" href="#" hidden="true">&about.hideThisPromo;</html:a>
+					<html:a id="promo-matchhead-hideAllPromos" href="#" hidden="true">&about.hideAllPromos;</html:a>
+				</html:div>
+			</html:div>
+		</html:div>
+	</vbox>
 
 </overlay>

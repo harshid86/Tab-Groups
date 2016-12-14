@@ -1,5 +1,26 @@
-// VERSION 2.4.12
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 2.4.16
 Modules.UTILS = true;
+
+XPCOMUtils.defineLazyGetter(this, "gWindow", function() {
+	// TODO: investigate when exactly I can use windowRoot
+	return	window.windowRoot
+		? window.windowRoot.ownerGlobal
+		: window.QueryInterface(Ci.nsIInterfaceRequestor)
+			.getInterface(Ci.nsIWebNavigation)
+			.QueryInterface(Ci.nsIDocShellTreeItem)
+			.rootTreeItem
+			.QueryInterface(Ci.nsIInterfaceRequestor)
+			.getInterface(Ci.nsIDOMWindow);
+});
+
+XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "FileUtils", "resource://gre/modules/FileUtils.jsm");
+XPCOMUtils.defineLazyGetter(this, "TextEncoder", () => { return Cu.import("resource://gre/modules/osfile.jsm").TextEncoder; });
+XPCOMUtils.defineLazyGetter(this, "TextDecoder", () => { return Cu.import("resource://gre/modules/osfile.jsm").TextDecoder; });
 
 // dependsOn - object that adds a dependson attribute functionality to xul preference elements.
 // Just add the attribute to the desired xul element and let the script do its thing. dependson accepts comma-separated or semicolon-separated strings in the following format:
@@ -188,6 +209,11 @@ this.delayPreferences = {
 
 		var nodes = $$('[delayPreference]');
 		for(let node of nodes) {
+			// Scales aren't considered "editable elements" by the preference handlers unless they specifically have this attribute.
+			if(node.localName == "scale" && !trueAttribute(node, "preference-editable")) {
+				setAttribute(node, "preference-editable", "true");
+			}
+
 			node._pref = $(node.getAttribute('delayPreference'));
 			node._pref.setElementValue(node);
 
@@ -575,7 +601,6 @@ this.helptext = {
 	kPanelWidth: 311, // roughly the maximum size of the panel node
 	kContentsWidth: 275, // the actual maximum size of the helptext contents
 
-	root: null,
 	panel: null,
 	contents: null,
 	main: null,
@@ -719,8 +744,8 @@ this.helptext = {
 	},
 
 	onLoad: function() {
-		this.panel = this.root.document.getElementById(objName+'-helptext');
-		this.contents = this.root.document.getElementById(objName+'-helptext-contents');
+		this.panel = gWindow.document.getElementById(objName+'-helptext');
+		this.contents = gWindow.document.getElementById(objName+'-helptext-contents');
 		this.main = $$('.main-content')[0];
 		this.prefPane = this.main.firstChild;
 
@@ -844,6 +869,7 @@ this.controllers = {
 				break;
 
 			case 'dragover':
+				// Change this to .includes() when removing compat for FF51-, currently uses a shim in FF52+
 				if(e.dataTransfer.types.contains("text/plain")) {
 					e.preventDefault();
 				}
@@ -990,8 +1016,6 @@ this.controllers = {
 
 	export: function() {
 		this.showFilePicker(Ci.nsIFilePicker.modeSave, objPathString+'-prefs', function(aFile) {
-			let { TextEncoder, OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
-
 			let list = { [objName]: AddonData.version };
 			for(let pref in prefList) {
 				list[pref] = Prefs[pref];
@@ -1008,8 +1032,6 @@ this.controllers = {
 
 	import: function() {
 		this.showFilePicker(Ci.nsIFilePicker.modeOpen, null, function(aFile) {
-			let { TextDecoder, OS } = Cu.import("resource://gre/modules/osfile.jsm", {});
-
 			OS.File.open(aFile.path, { read: true }).then(function(ref) {
 				ref.read().then(function(saved) {
 					ref.close();
@@ -1033,21 +1055,37 @@ this.controllers = {
 		});
 	},
 
-	showFilePicker: function(mode, prefix, aCallback) {
+	showFilePicker: function(mode, prefix, aCallback, path) {
+		let fileExt = '.json';
 		let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
 		fp.defaultExtension = 'json';
 		fp.appendFilter('JSON data', '*.json');
 
+		if(path) {
+			fp.displayDirectory = new FileUtils.File(path);
+		}
+
 		if(mode == Ci.nsIFilePicker.modeSave) {
 			let date = new Date();
-			let dateStr = date.getFullYear()+'-'+(date.getMonth() +1)+'-'+date.getDate()+'-'+date.getHours()+'-'+date.getMinutes()+'-'+date.getSeconds();
-			fp.defaultString = prefix+'-'+dateStr;
+			let y = date.getFullYear();
+			let m = (date.getMonth() +1); if(m < 10) { m = "0"+m; }
+			let d = date.getDate(); if(d < 10) { d = "0"+d; }
+			let h = date.getHours(); if(h < 10) { h = "0"+h; }
+			let mm = date.getMinutes(); if(mm < 10) { mm = "0"+mm; }
+			let s = date.getSeconds(); if(s < 10) { s = "0"+s; }
+			let dateStr = ""+y+m+d+"-"+h+mm+s;
+			fp.defaultString = prefix+'-'+dateStr+fileExt;
 		}
 
 		fp.init(window, null, mode);
 		fp.open(function(aResult) {
 			if(aResult != Ci.nsIFilePicker.returnCancel) {
-				aCallback(fp.file);
+				let aFile = fp.file;
+				// We always make sure we're saving a .json text file, so that it can be recognized and loaded by the add-on.
+				if(mode == Ci.nsIFilePicker.modeSave && !aFile.path.endsWith(fileExt)) {
+					aFile.initWithPath(aFile.path+fileExt);
+				}
+				aCallback(aFile);
 			}
 		});
 	},
@@ -1188,7 +1226,7 @@ this.DnDproxy = {
 
 Modules.LOADMODULE = function() {
 	alwaysRunOnClose.push(function() {
-		Overlays.removeOverlayWindow(helptext.root, 'utils/helptext');
+		Overlays.removeOverlayWindow(gWindow, 'utils/helptext');
 	});
 
 	callOnLoad(window, function() {
@@ -1199,17 +1237,7 @@ Modules.LOADMODULE = function() {
 		categories.init();
 		controllers.init();
 
-		// investigate when exactly I can use windowRoot
-		helptext.root = window.windowRoot
-			? window.windowRoot.ownerGlobal
-			: window.QueryInterface(Ci.nsIInterfaceRequestor)
-				.getInterface(Ci.nsIWebNavigation)
-				.QueryInterface(Ci.nsIDocShellTreeItem)
-				.rootTreeItem
-				.QueryInterface(Ci.nsIInterfaceRequestor)
-				.getInterface(Ci.nsIDOMWindow);
-
-		Overlays.overlayWindow(helptext.root, 'utils/helptext', helptext);
+		Overlays.overlayWindow(gWindow, 'utils/helptext', helptext);
 	});
 };
 
@@ -1222,7 +1250,7 @@ Modules.UNLOADMODULE = function() {
 	controllers.uninit();
 	helptext.uninit();
 
-	Overlays.removeOverlayWindow(helptext.root, 'utils/helptext');
+	Overlays.removeOverlayWindow(gWindow, 'utils/helptext');
 
 	if(UNLOADED) {
 		window.close();

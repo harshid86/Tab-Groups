@@ -1,4 +1,8 @@
-// VERSION 1.1.4
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.2.1
 
 this.Storage = {
 	kGroupIdentifier: "tabview-group",
@@ -16,59 +20,48 @@ this.Storage = {
 
 	// Load tab data from session store and return it.
 	getTabData: function(tab) {
-		let existingData = null;
-
 		try {
 			let tabData = SessionStore.getTabValue(tab, this.kTabIdentifier);
-			if(tabData != "") {
-				existingData = JSON.parse(tabData);
+			if(tabData) {
+				return JSON.parse(tabData);
 			}
 		}
 		catch(ex) { /* getTabValue will fail if the property doesn't exist. */ }
 
-		return existingData;
+		return null;
 	},
 
 	// Returns the current state of the given tab.
 	getTabState: function(tab) {
-		let tabState;
-
 		try {
-			tabState = JSON.parse(SessionStore.getTabState(tab));
+			let tabState = SessionStore.getTabState(tab);
+			if(tabState) {
+				return JSON.parse(tabState);
+			}
 		}
 		catch(ex) {}
 
-		return tabState;
+		return null;
 	},
 
 	// Saves the data for a single groupItem, associated with a specific window.
 	saveGroupItem: function(win, data) {
 		let id = data.id;
-		let existingData = this.readGroupItemData(win);
+		let existingData = this.readGroupItemData(win) || {};
 		existingData[id] = data;
-		SessionStore.setWindowValue(win, this.kGroupIdentifier, JSON.stringify(existingData));
+		this.saveData(win, this.kGroupIdentifier, existingData);
 	},
 
 	// Deletes the data for a single groupItem from the given window.
 	deleteGroupItem: function(win, id) {
-		let existingData = this.readGroupItemData(win);
+		let existingData = this.readGroupItemData(win) || {};
 		delete existingData[id];
-		SessionStore.setWindowValue(win, this.kGroupIdentifier, JSON.stringify(existingData));
+		this.saveData(win, this.kGroupIdentifier, existingData);
 	},
 
 	// Returns the data for all groupItems associated with the given window.
 	readGroupItemData: function(win) {
-		let existingData = {};
-
-		try {
-			let data = SessionStore.getWindowValue(win, this.kGroupIdentifier);
-			if(data) {
-				existingData = JSON.parse(data);
-			}
-		}
-		catch(ex) { /* getWindowValue will fail if the property doesn't exist */ }
-
-		return existingData;
+		return this.readData(win, this.kGroupIdentifier);
 	},
 
 	// Returns the current busyState for the given window.
@@ -116,16 +109,15 @@ this.Storage = {
 
 	// Generic routine for reading data from a window.
 	readData: function(win, id) {
-		let existingData = {};
 		try {
 			let data = SessionStore.getWindowValue(win, id);
 			if(data) {
-				existingData = JSON.parse(data);
+				return JSON.parse(data);
 			}
 		}
 		catch(ex) {}
 
-		return existingData;
+		return null;
 	}
 };
 
@@ -150,6 +142,22 @@ Modules.LOADMODULE = function() {
 		}
 
 		return this.__prepWindowToRestoreInto(aWindow);
+	});
+
+	Piggyback.add('Storage', Storage._scope.SessionStoreInternal, 'restoreWindow', function(aWindow, winData, aOptions) {
+		// Deinitialize tab view in any window that will have its session overwritten.
+		// Nothing in TabView will be useful anyway, just let it reinistialize if/when necessary later by itself.
+		if(aWindow.TabView) {
+			aWindow.TabView._deinitFrame();
+		}
+
+		// Call the original method.
+		this._restoreWindow(aWindow, winData, aOptions);
+
+		// Update our button's label, to reflect the groups data in the new/different session.
+		if(aWindow.TabView) {
+			aWindow.TabView.setButtonLabel();
+		}
 	});
 
 	Piggyback.add('Storage', Storage._migrationScope.SessionMigrationInternal, 'convertState', function(aStateObj) {
@@ -198,5 +206,6 @@ Modules.LOADMODULE = function() {
 
 Modules.UNLOADMODULE = function() {
 	Piggyback.revert('Storage', Storage._scope.SessionStoreInternal, '_prepWindowToRestoreInto');
+	Piggyback.revert('Storage', Storage._scope.SessionStoreInternal, 'restoreWindow');
 	Piggyback.revert('Storage', Storage._migrationScope.SessionMigrationInternal, 'convertState');
 };

@@ -1,4 +1,8 @@
-// VERSION 1.7.1
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 1.7.5
 Modules.UTILS = true;
 
 // Keysets - handles editable keysets for the add-on
@@ -119,17 +123,17 @@ this.Keysets = {
 
 	// all the codes to be filled into selection menus, in the order they should be shown
 	fillCodes: [
-		['none', Strings.get('utils/keys', 'none')],
+		['none', Strings.get('utils-keys', 'none')],
 		['A'],['B'],['C'],['D'],['E'],['F'],['G'],['H'],['I'],['J'],['K'],['L'],['M'],['N'],['O'],['P'],['Q'],['R'],['S'],['T'],['U'],['V'],['W'],['X'],['Y'],['Z'],
-		[' ', Strings.get('utils/keys', 'spacebar')],
-		['PageUp', Strings.get('utils/keys', 'pageup')],
-		['PageDown', Strings.get('utils/keys', 'pagedown')],
-		['Home', Strings.get('utils/keys', 'home')],
-		['End', Strings.get('utils/keys', 'end')],
-		['ArrowUp', Strings.get('utils/keys', 'up')],
-		['ArrowDown', Strings.get('utils/keys', 'down')],
-		['ArrowLeft', Strings.get('utils/keys', 'left')],
-		['ArrowRight', Strings.get('utils/keys', 'right')],
+		[' ', Strings.get('utils-keys', 'spacebar')],
+		['PageUp', Strings.get('utils-keys', 'pageup')],
+		['PageDown', Strings.get('utils-keys', 'pagedown')],
+		['Home', Strings.get('utils-keys', 'home')],
+		['End', Strings.get('utils-keys', 'end')],
+		['ArrowUp', Strings.get('utils-keys', 'up')],
+		['ArrowDown', Strings.get('utils-keys', 'down')],
+		['ArrowLeft', Strings.get('utils-keys', 'left')],
+		['ArrowRight', Strings.get('utils-keys', 'right')],
 		['.'],[','],[';'],['/'],['\\'],['='],['+'],['-'],['*'],['<'],['>'],
 		[String.fromCharCode(180)/*'´'*/],['`'],['~'],['^'],
 		['F1'],['F2'],['F3'],['F4'],['F5'],['F6'],['F7'],['F8'],['F9'],['F10'],['F11'],['F12'],
@@ -138,10 +142,10 @@ this.Keysets = {
 
 	// for the preferences tab, to auto-fill all the key options and labels
 	fillKeyStrings: function(key) {
-		setAttribute(key.accelBox, 'label', Strings.get('utils/keys', DARWIN ? 'command' : 'control'));
-		setAttribute(key.shiftBox, 'label', Strings.get('utils/keys', 'shift'));
-		setAttribute(key.altBox, 'label', Strings.get('utils/keys', DARWIN ? 'option' : 'alt'));
-		setAttribute(key.ctrlBox, 'label', Strings.get('utils/keys', 'control'));
+		setAttribute(key.accelBox, 'label', Strings.get('utils-keys', DARWIN ? 'command' : 'control'));
+		setAttribute(key.shiftBox, 'label', Strings.get('utils-keys', 'shift'));
+		setAttribute(key.altBox, 'label', Strings.get('utils-keys', DARWIN ? 'option' : 'alt'));
+		setAttribute(key.ctrlBox, 'label', Strings.get('utils-keys', 'control'));
 
 		// A separate checkbox for Control is shown in OSX, because "accel" == "ctrl" only on Windows and Linux, and it's == "command" in OSX.
 		key.ctrlBox.hidden = !DARWIN;
@@ -236,6 +240,7 @@ this.Keysets = {
 			let exists = this.exists(key);
 			if(!exists) {
 				this.registered.push(key);
+				this.flushOthers();
 			} else {
 				for(let other of this.delayedOtherKeys) {
 					if(other(exists)) {
@@ -261,6 +266,7 @@ this.Keysets = {
 		for(var r=0; r<this.registered.length; r++) {
 			if(this.registered[r].id == key.id) {
 				this.registered.splice(r, 1);
+				this.flushOthers();
 
 				if(!noSchedule) {
 					this.setAllWindows();
@@ -292,8 +298,43 @@ this.Keysets = {
 	// array of methods/occasions where a key could be reported as in/valid by mistake because it belongs to an add-on that hasn't been initialized yet
 	delayedOtherKeys: [
 		// Tile Tabs Function keys
-		function(aKey) { return aKey.id.startsWith('tiletabs-fkey-') && !aKey.hasModifiers; }
+		function(aKey) { return aKey.id.startsWith('tiletabs-fkey-') && !aKey.hasModifiers; },
+		// Tab Mix Plus keys that depend on its Session Manager settings finishing initializing
+		function(aKey) {
+			try {
+				return (aKey.id == 'key_tm-sm-saveone' || aKey.id == 'key_tm-sm-saveall') && !Services.prefs.getBoolPref('extensions.tabmix.sessions.manager');
+			}
+			catch(ex) { /* We don't care when this fails (does it even?), just don't hold initialization for it. */ }
+			return true;
+		}
 	],
+
+	_flushing: new Set(),
+	flushOthers: function(deinitializing) {
+		// This should be self-dependent as it is called on shutdown as well.
+		let obs = Services.obs;
+
+		// If AdBlock Plus is enabled, we will need to clear its keys cache when our keys are changed, to ensure there are no conflicts between both add-ons.
+		// This should be inconsequential for ABP itself, as it will just rebuild it form the available keysets the next time it needs it.
+		if(deinitializing || !this._flushing.has('adblockplus')) {
+			if(!deinitializing) {
+				this._flushing.add('adblockplus');
+			}
+			AddonManager.getAddonByID('{d10d0bf8-f5b5-c8b4-a8b2-2b9879e08c5d}', (addon) => {
+				if(addon && addon.isActive) {
+					let result = {};
+					result.wrappedJSObject = result;
+					obs.notifyObservers(result, "adblockplus-require", "ui");
+					if(result.exports.UI) {
+						result.exports.UI.hotkeys = null;
+					}
+				}
+				if(!deinitializing) {
+					this._flushing.delete('adblockplus');
+				}
+			});
+		}
+	},
 
 	prepareKey: function(key) {
 		let newKey = {
@@ -479,6 +520,7 @@ this.Keysets = {
 	},
 
 	unsetAllWindows: function() {
+		this.flushOthers(true);
 		Windows.callOnAll((aWindow) => { this.unsetWindow(aWindow); }, 'navigator:browser');
 	},
 

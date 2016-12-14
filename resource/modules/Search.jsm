@@ -1,20 +1,37 @@
-// VERSION 1.0.3
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// VERSION 2.1.3
 
 // Implementation for the search functionality of Firefox Panorama.
 // Class: TabUtils - A collection of helper functions for dealing with both <TabItem>s and <xul:tab>s without having to worry which one is which.
+// We can have two types of tabs: A <TabItem> or an <AppItem> because we have to deal with both tabs represented inside
+// of active Panoramas. We use object sniffing to determine the type of tab and then returns its name.
 this.TabUtils = {
+	getTabItem: function(tab) {
+		return tab._tabViewTabItem || tab._tabViewAppItem || tab;
+	},
+
 	// Given a <TabItem> or a <xul:tab> returns the tab's name.
 	nameOf: function(tab) {
-		// We can have two types of tabs: A <TabItem> or a <xul:tab> because we have to deal with both tabs represented inside
-		// of active Panoramas as well as for windows in which Panorama has yet to be activated. We uses object sniffing to
-		// determine the type of tab and then returns its name.
-		return tab.label != undefined ? tab.label : tab.$tabTitle[0].textContent;
+		tab = this.getTabItem(tab);
+		if(tab.isATabItem) {
+			return tab.tabTitle.textContent;
+		}
+		if(tab.isAnAppItem) {
+			tab = tab.tab;
+		}
+		return tab.label;
 	},
 
 	// Given a <TabItem> or a <xul:tab> returns the URL of tab.
 	URLOf: function(tab) {
-		// Convert a <TabItem> to <xul:tab>
-		if("tab" in tab) {
+		tab = this.getTabItem(tab);
+		if(tab.isATabItem) {
+			return tab.tabUrl.textContent;
+		}
+		if(tab.isAnAppItem) {
 			tab = tab.tab;
 		}
 		return tab.linkedBrowser.currentURI.spec;
@@ -22,29 +39,47 @@ this.TabUtils = {
 
 	// Given a <TabItem> or a <xul:tab> returns the URL of tab's favicon.
 	faviconURLOf: function(tab) {
-		return tab.image != undefined ? tab.image : tab.$favImage[0].src;
-	},
-
-	// Given a <TabItem> or a <xul:tab>, focuses it and it's window.
-	focus: function(tab) {
-		// Convert a <TabItem> to a <xul:tab>
-		if("tab" in tab) {
-			tab = tab.tab;
+		tab = this.getTabItem(tab);
+		if(tab.isATabItem) {
+			return tab.fav._iconUrl;
 		}
-		tab.ownerDocument.defaultView.gBrowser.selectedTab = tab;
-		tab.ownerDocument.defaultView.focus();
+		if(tab.isAnAppTab) {
+			return tab._iconUrl;
+		}
+		return tab.image;
 	}
 };
 
 // Class: TabMatcher - A class that allows you to iterate over matching and not-matching tabs, given a case-insensitive search term.
 this.TabMatcher = function(term) {
 	this.term = term;
+	this.matches = null;
+	this.nonmatches = null;
+	this.cancelled = false;
+
+	// We need updated labels, urls and icons for our results.
+	this.promises = [];
+	this.promises.push(PinnedItems.flushUpdates());
+	this.promises.push(TabItems.flushLabelsUpdates());
+	this.ready = Promise.all(this.promises);
+
+	this.tabs = [];
+	for(let appItem of PinnedItems) {
+		this.tabs.push(appItem);
+	}
+	for(let tabItem of TabItems) {
+		this.tabs.push(tabItem);
+	}
 };
 
 this.TabMatcher.prototype = {
+	cancel: function() {
+		this.cancelled = true;
+	},
+
 	// Given an array of <TabItem>s and <xul:tab>s returns a new array of tabs whose name matched the search term, sorted by lexical closeness.
-	_filterAndSortForMatches: function(tabs) {
-		tabs = tabs.filter((tab) => {
+	_filterAndSortForMatches: function() {
+		let tabs = this.tabs.filter((tab) => {
 			let name = TabUtils.nameOf(tab);
 			let url = TabUtils.URLOf(tab);
 			return name.match(new RegExp(this.term, "i")) || url.match(new RegExp(this.term, "i"));
@@ -60,82 +95,64 @@ this.TabMatcher.prototype = {
 	},
 
 	// Given an array of <TabItem>s returns an unsorted array of tabs whose name does not match the the search term.
-	_filterForUnmatches: function(tabs) {
-		return tabs.filter((tab) => {
-			let name = tab.$tabTitle[0].textContent;
+	_filterForUnmatches: function() {
+		return this.tabs.filter((tab) => {
+			let name = TabUtils.nameOf(tab);
 			let url = TabUtils.URLOf(tab);
 			return !name.match(new RegExp(this.term, "i")) && !url.match(new RegExp(this.term, "i"));
 		});
 	},
 
-	// Returns an array of <TabItem>s and <xul:tabs>s representing tabs from all windows but the current window. <TabItem>s will be returned
-	// for windows in which Panorama has been activated at least once, while <xul:tab>s will be returned for windows in which Panorama has never been activated.
-	_getTabsForOtherWindows: function() {
-		let enumerator = Services.wm.getEnumerator("navigator:browser");
-		let allTabs = [];
-
-		while(enumerator.hasMoreElements()) {
-			let win = enumerator.getNext();
-			// This function gets tabs from other windows, not from the current window
-			if(win != gWindow) {
-				allTabs.push.apply(allTabs, win.gBrowser.tabs);
+	// Returns an array of <TabItem>s which match the current search term.
+	// If there is no search term, it returns nothing.
+	matched: function() {
+		if(!this.matches) {
+			if(!this.term.length) {
+				this.matches = [];
+			} else {
+				this.matches = this._filterAndSortForMatches();
 			}
 		}
-		return allTabs;
-	},
-
-	// Returns an array of <TabItem>s and <xul:tab>s that match the search term from all windows but the current window.
-	// <TabItem>s will be returned for windows in which Panorama has been activated at least once, while <xul:tab>s will be returned for windows in which Panorama has never
-	// been activated. // (new TabMatcher("app")).matchedTabsFromOtherWindows();
-	matchedTabsFromOtherWindows: function() {
-		if(this.term.length < 2) {
-			return [];
-		}
-
-		let tabs = this._getTabsForOtherWindows();
-		return this._filterAndSortForMatches(tabs);
-	},
-
-	// Returns an array of <TabItem>s which match the current search term.
-	// If the term is less than 2 characters in length, it returns nothing.
-	matched: function() {
-		if(this.term.length < 2) {
-			return [];
-		}
-
-		let tabs = TabItems.getItems();
-		return this._filterAndSortForMatches(tabs);
+		return this.matches;
 	},
 
 	// Returns all of <TabItem>s that .matched() doesn't return.
 	unmatched: function() {
-		let tabs = TabItems.getItems();
-		if(this.term.length < 2) {
-			return tabs;
+		if(!this.nonmatches) {
+			if(!this.term.length) {
+				this.nonmatches = this.tabs;
+			} else {
+				this.nonmatches = this._filterForUnmatches();
+			}
 		}
-
-		return this._filterForUnmatches(tabs);
+		return this.nonmatches;
 	},
 
 	// Performs the search. Lets you provide three functions.
 	// The first is on all matched tabs in the window, the second on all unmatched tabs in the window, and the third on all matched tabs in other windows.
 	// The first two functions take two parameters: A <TabItem> and its integer index indicating the absolute rank of the <TabItem> in terms of match to the search term.
 	// The last function also takes two paramaters, but can be passed both <TabItem>s and <xul:tab>s and the index is offset by the number of matched tabs inside the window.
-	doSearch: function(matchFunc, unmatchFunc, otherFunc) {
-		let matches = this.matched();
-		let unmatched = this.unmatched();
-		let otherMatches = this.matchedTabsFromOtherWindows();
+	doSearch: function(handler) {
+		this.ready.then(() => {
+			if(this.cancelled) { return; }
 
-		matches.forEach(function(tab, i) {
-			matchFunc(tab, i);
-		});
+			handler.clearSearch();
 
-		otherMatches.forEach(function(tab,i) {
-			otherFunc(tab, i+matches.length);
-		});
+			let matches = this.matched();
+			matches.forEach(function(tab, i) {
+				handler.onMatch(tab, i);
+			});
 
-		unmatched.forEach(function(tab, i) {
-			unmatchFunc(tab, i);
+			if(handler.onUnmatch) {
+				let unmatched = this.unmatched();
+				unmatched.forEach(function(tab) {
+					handler.onUnmatch(tab);
+				});
+			}
+
+			if(handler.finishSearch) {
+				handler.finishSearch();
+			}
 		});
 	},
 
@@ -195,279 +212,792 @@ this.TabMatcher.prototype = {
 	}
 };
 
-// Class: TabHandlers - A object that handles all of the event handlers.
-this.TabHandlers = {
-	_mouseDownLocation: null,
-
-	// Adds styles and event listeners to the matched tab items.
-	onMatch: function(tab, index) {
-		tab.addClass("onTop");
-		index != 0 ? tab.addClass("notMainMatch") : tab.removeClass("notMainMatch");
-
-		// Remove any existing handlers before adding the new ones. If we don't do this, then we may add more handlers than we remove.
-		tab.$canvas
-			.unbind("mousedown", TabHandlers._hideHandler)
-			.unbind("mouseup", TabHandlers._showHandler);
-
-		tab.$canvas
-			.mousedown(TabHandlers._hideHandler)
-			.mouseup(TabHandlers._showHandler);
-	},
-
-	// Removes styles and event listeners from the unmatched tab items.
-	onUnmatch: function(tab, index) {
-		tab.$container.removeClass("onTop");
-		tab.removeClass("notMainMatch");
-
-		tab.$canvas
-			.unbind("mousedown", TabHandlers._hideHandler)
-			.unbind("mouseup", TabHandlers._showHandler);
-	},
-
-	// Removes styles and event listeners from the unmatched tabs.
-	onOther: function(tab, index) {
-		// Unlike the other on* functions, in this function tab can either be a <TabItem> or a <xul:tab>. In other functions it is always a <TabItem>.
-		// Also note that index is offset by the number of matches within the window.
-		let item = iQ("<div/>")
-			.addClass("inlineMatch")
-			.click(function(event) {
-				Search.hide(event);
-				TabUtils.focus(tab);
-			});
-
-		iQ("<img/>")
-			.attr("src", TabUtils.faviconURLOf(tab))
-			.appendTo(item);
-
-		iQ("<span/>")
-			.text(TabUtils.nameOf(tab))
-			.appendTo(item);
-
-		index != 0 ? item.addClass("notMainMatch") : item.removeClass("notMainMatch");
-		item.appendTo("#results");
-		iQ("#otherresults").show();
-	},
-
-	// Performs when mouse down on a canvas of tab item.
-	_hideHandler: function(event) {
-		iQ("#search").fadeOut();
-		iQ("#searchshade").fadeOut();
-		TabHandlers._mouseDownLocation = { x:event.clientX, y:event.clientY };
-	},
-
-	// Performs when mouse up on a canvas of tab item.
-	_showHandler: function(event) {
-		// If the user clicks on a tab without moving the mouse then they are zooming into the tab and we need to exit search mode.
-		if(TabHandlers._mouseDownLocation.x == event.clientX && TabHandlers._mouseDownLocation.y == event.clientY) {
-			Search.hide();
-			return;
-		}
-
-		iQ("#searchshade").show();
-		iQ("#search").show();
-		iQ("#searchbox")[0].focus();
-
-		// Marshal the search.
-		aSync(Search.perform, 0);
-	}
-};
-
 // Class: Search - A object that handles the search feature.
 this.Search = {
-	_initiatedBy: "",
+	inSearch: false,
+	_initiatedByKeypress: false,
 	_blockClick: false,
-	_currentHandler: null,
+	_lastSearch: null,
+	_activeTab: null,
+	_position: null,
+	lastMouseDownTarget: null,
+
+	_fragmentGroup: null,
+	_fragmentResult: null,
+
+	get searchbox() { return $('searchbox'); },
+	get searchquery() { return $('searchquery'); },
+	get searchshade() { return $('searchshade'); },
+	get searchbutton() { return $('searchbutton'); },
+	get searchmode() { return $('search-mode'); },
+	get searchclose() { return $('search-close'); },
+
+	get results() { return $('searchresults'); },
+
+	handleEvent: function(e) {
+		switch(e.type) {
+			case 'input':
+				this.perform();
+				break;
+
+			case 'mousedown':
+				switch(e.target) {
+					case this.searchshade:
+						if(!this._blockClick) {
+							this.hide();
+						}
+						break;
+
+					case this.searchbutton:
+						this.ensureShown();
+						break;
+
+					case this.searchmode:
+					case this.searchclose:
+					case this.searchbox:
+						e.preventDefault();
+
+						if(Prefs.searchMode == 'highlight') {
+							this.lastMouseDownTarget = e.target;
+
+							new HighlighterDrag(e, () => {
+								if(!DraggingHighlighter.started) {
+									switch(this.lastMouseDownTarget) {
+										case this.searchmode:
+											this.toggleMode();
+											break;
+
+										case this.searchclose:
+											this.hide();
+											break;
+									}
+								}
+								else {
+									// Make sure it wasn't dragged too far out of the window bounds. If it was, snap it back into view.
+									this.snapToView();
+									this.savePosition();
+								}
+
+								this.lastMouseDownTarget = null;
+							});
+						}
+						else {
+							switch(e.target) {
+								case this.searchmode:
+									this.toggleMode();
+									break;
+
+								case this.searchclose:
+									this.hide();
+									break;
+							}
+						}
+						break;
+				}
+				break;
+
+			case 'mousemove':
+				if(e.target.classList.contains('tab')) {
+					this.focusItem(e.target._item);
+				}
+				break;
+
+			case 'focus':
+				if(this.inSearch) {
+					this._blockClick = true;
+					aSync(() => {
+						this._blockClick = false;
+					}, 0);
+				}
+				break;
+
+			case 'blur':
+				aSync(() => {
+					// This could happen as a result of switching modes, which in turn can refocus the searchquery.
+					if(Prefs.searchMode == 'highlight' && this.searchquery != document.activeElement && !this.searchquery.value.length) {
+						this.hide();
+					}
+				}, 10);
+				break;
+
+			case 'keydown':
+				if(this.inSearch && document.activeElement == this.searchquery) {
+					this._inSearchKeyHandler(e);
+				} else {
+					this._beforeSearchKeyHandler(e);
+				}
+				break;
+		}
+	},
+
+	observe: function(aSubject, aTopic, aData) {
+		switch(aSubject) {
+			case 'searchMode':
+				this.applyMode();
+				break;
+		}
+	},
 
 	// Initializes the searchbox to be focused, and everything else to be hidden, and to have everything have the appropriate event handlers.
 	init: function() {
-		iQ("#search").hide();
-		iQ("#searchshade").hide().mousedown((event) => {
-			if(event.target.id != "searchbox" && !this._blockClick)
-			this.hide();
-		});
+		this.$searchbox = iQ(this.searchbox);
 
-		iQ("#searchbox").keyup(() => {
-			this.perform();
-		});
+		Prefs.listen('searchMode', this);
+		Listeners.add(this.searchshade, 'mousedown', this);
+		Listeners.add(this.searchquery, 'input', this);
+		Listeners.add(this.searchquery, 'blur', this);
+		Listeners.add(this.searchbutton, 'mousedown', this);
+		Listeners.add(this.results, 'mousemove', this);
+		Listeners.add(this.searchbox, 'mousedown', this);
+		Listeners.add(window, 'focus', this);
+		Listeners.add(window, 'keydown', this);
+	},
 
-		iQ("#searchbutton").mousedown(() => {
-			this._initiatedBy = "buttonclick";
-			this.ensureShown();
-			this.switchToInMode();
-		});
-
-		window.addEventListener("focus", () => {
-			if(this.isEnabled()) {
-				this._blockClick = true;
-				aSync(() => {
-					this._blockClick = false;
-				}, 0);
-			}
-		}, false);
-
-		this.switchToBeforeMode();
+	uninit: function() {
+		Prefs.unlisten('searchMode', this);
+		Listeners.remove(this.searchshade, 'mousedown', this);
+		Listeners.remove(this.searchquery, 'input', this);
+		Listeners.remove(this.searchquery, 'blur', this);
+		Listeners.remove(this.searchbutton, 'mousedown', this);
+		Listeners.remove(this.results, 'mousemove', this);
+		Listeners.remove(this.searchbox, 'mousedown', this);
+		Listeners.remove(window, 'focus', this);
+		Listeners.remove(window, 'keydown', this);
 	},
 
 	// Handles all keydown before the search interface is brought up.
 	_beforeSearchKeyHandler: function(e) {
-		// Only match reasonable text-like characters for quick search.
-		if(e.altKey || e.ctrlKey || e.metaKey) { return; }
-
-		if((e.keyCode > 0 && e.keyCode <= e.DOM_VK_DELETE)
-		|| e.keyCode == e.DOM_VK_CONTEXT_MENU
-		|| e.keyCode == e.DOM_VK_SLEEP
-		|| (e.keyCode >= e.DOM_VK_F1 && e.keyCode <= e.DOM_VK_SCROLL_LOCK)
-		|| e.keyCode == e.DOM_VK_META
-		// 91 = left windows key
-		|| e.keyCode == 91
-		// 92 = right windows key
-		|| e.keyCode == 92
-		|| (!e.keyCode && !e.charCode)) {
+		if(this.inSearch && e.key == "Escape") {
+			e.preventDefault();
+			e.stopPropagation();
+			this.hide();
 			return;
 		}
 
+		// Only match reasonable text-like characters for quick search.
+		if(e.altKey || e.ctrlKey || e.metaKey) { return; }
+
+		let isDeleteKey = (e.key == "Backspace" || e.key == "Delete");
+		if(!this.searchquery.value.length && isDeleteKey) { return; }
+		if(!isDeleteKey && (e.key.length != 1 || e.key == " ")) { return; }
+
 		// If we are already in an input field, allow typing as normal.
-		if(e.target.nodeName == "input") { return; }
+		if(UI.isTextField(e.target)) { return; }
+
+		// Don't start a search if a group's options dialog is already shown.
+		if(GroupOptionsUI.activeOptions) { return; }
 
 		// / is used to activate the search feature so the key shouldn't be entered into the search box.
-		if(e.keyCode == e.DOM_VK_SLASH) {
+		if(e.key == "\\") {
 			e.stopPropagation();
 			e.preventDefault();
 		}
 
-		this.switchToInMode();
-		this._initiatedBy = "keydown";
+		// Do we already have a search active?
+		if(this.inSearch) {
+			if(!isDeleteKey) {
+				this.clearSearch(true);
+			}
+			this.focus(isDeleteKey);
+		}
+
 		this.ensureShown(true);
 	},
 
 	// Handles all keydown while search mode.
 	_inSearchKeyHandler: function(e) {
-		let term = iQ("#searchbox").val();
-		if((e.keyCode == e.DOM_VK_ESCAPE)
-		|| (e.keyCode == e.DOM_VK_BACK_SPACE && term.length <= 1 && this._initiatedBy == "keydown")) {
-			this.hide(e);
-			return;
-		}
+		switch(e.key) {
+			case "Backspace":
+				if(this.searchquery.value.length > 1 || !this._initiatedByKeypress) { break; }
+				// no break; continue to Escape
 
-		let matcher = this.createSearchTabMatcher();
-		let matches = matcher.matched();
-		let others =  matcher.matchedTabsFromOtherWindows();
-		if(e.keyCode == e.DOM_VK_RETURN && (matches.length > 0 || others.length > 0)) {
-			this.hide(e);
-			if(matches.length > 0) {
-				matches[0].zoomIn();
-			} else {
-				TabUtils.focus(others[0]);
+			case "Escape":
+				this.hide(e);
+				break;
+
+			case "Enter":
+				if(Prefs.searchMode == 'highlight') {
+					if(e.shiftKey && document.activeElement == this.searchquery) {
+						this.searchquery.blur();
+						e.preventDefault();
+						e.stopPropagation();
+					}
+					break;
+				}
+
+				if(this.currentItem) {
+					if(e.shiftKey) {
+						this.currentItem.setActive(e);
+					} else {
+						this.currentItem.zoomIn(e);
+					}
+				}
+				break;
+
+			case "Tab":
+			case "ArrowDown":
+			case "ArrowUp": {
+				if(Prefs.searchMode != 'list') { break; }
+
+				e.preventDefault();
+				e.stopPropagation();
+				let i = (this.currentItem) ? this.ordered.indexOf(this.currentItem) : -1;
+				if(e.key == "ArrowDown" || (e.key == "Tab" && !e.shiftKey)) {
+					i++;
+					if(i >= this.ordered.length) {
+						i = 0;
+					}
+				} else {
+					i--;
+					if(i < 0) {
+						i = this.ordered.length -1;
+					}
+				}
+				let item = this.ordered[i] || null;
+				this.focusItem(item);
+
+				// Make sure the item is in view. .scrollIntoView() just scrolls indiscriminately...
+				if(item) {
+					let results = this.results;
+					let offsetNode = item.container;
+					let offsetTop = 0;
+					while(offsetNode != results) {
+						offsetTop += offsetNode.offsetTop;
+						offsetNode = offsetNode.offsetParent;
+					}
+					let offsetHeight = item.container.offsetHeight;
+
+					if(offsetTop + offsetHeight > results.scrollTop + results.offsetHeight) {
+						let scrollTop = offsetTop - results.offsetHeight + offsetHeight;
+						scrollTop = Math.min(scrollTop, results.scrollTopMax);
+						results.scrollTop = scrollTop;
+					}
+					else if(offsetTop < results.scrollTop) {
+						let scrollTop = offsetTop;
+						scrollTop = Math.max(scrollTop, 0);
+						results.scrollTop = scrollTop;
+					}
+				}
+				break;
 			}
 		}
-	},
-
-	// Make sure the event handlers are appropriate for the before-search mode.
-	switchToBeforeMode: function() {
-		if(this._currentHandler) {
-			iQ(window).unbind("keydown", this._currentHandler);
-		}
-		this._currentHandler = (e) => {
-			this._beforeSearchKeyHandler(e);
-		}
-		iQ(window).keydown(this._currentHandler);
-	},
-
-	// Make sure the event handlers are appropriate for the in-search mode.
-	switchToInMode: function() {
-		if(this._currentHandler) {
-			iQ(window).unbind("keydown", this._currentHandler);
-		}
-		this._currentHandler = (e) => {
-			this._inSearchKeyHandler(e);
-		}
-		iQ(window).keydown(this._currentHandler);
-	},
-
-	createSearchTabMatcher: function() {
-		return new TabMatcher(iQ("#searchbox").val());
-	},
-
-	// Checks whether search mode is enabled or not.
-	isEnabled: function() {
-		return iQ("#search").css("display") != "none";
 	},
 
 	// Hides search mode.
 	hide: function(e) {
-		if(!this.isEnabled()) { return; }
+		if(!this.inSearch) { return; }
 
-		iQ("#searchbox").val("");
-		iQ("#searchshade").hide();
-		iQ("#search").hide();
-
-		iQ("#searchbutton").css({ opacity:.8 });
-
-		if(DARWIN) {
-			UI.setTitlebarColors(true);
+		// Only return focus to the previously active tab when exiting search mode if the search returned no results.
+		if((Prefs.searchMode == 'highlight' || !this.currentItem) && this._activeTab && !this._activeTab.parent.hidden) {
+			UI.setActive(this._activeTab);
 		}
 
-		this.perform();
-		this.switchToBeforeMode();
+		removeAttribute(document.body, 'searching');
+		this.inSearch = false;
+		this._activeTab = null;
+		this.clearSearch(true);
 
 		if(e) {
-			// when hiding the search mode, we need to prevent the keypress handler in UI__setTabViewFrameKeyHandlers to handle the key press again.
-			// e.g. Esc which is already handled by the key down in this class.
-			if(e.type == "keydown") {
-				UI.ignoreKeypressForSearch = true;
-			}
 			e.preventDefault();
 			e.stopPropagation();
 		}
 
 		// Return focus to the tab window
 		UI.blurAll();
-		gTabViewFrame.contentWindow.focus();
+		window.focus();
 
 		dispatch(window, { type: "tabviewsearchdisabled", cancelable: false, bubbles: false });
 	},
 
 	// Performs a search.
 	perform: function() {
-		let matcher =  this.createSearchTabMatcher();
+		Timers.init('PerformSearch', () => {
+			// Could have exited by now.
+			if(!this.inSearch) { return; }
 
-		// Remove any previous other-window search results and hide the display area.
-		iQ("#results").empty();
-		iQ("#otherresults").hide();
-		iQ("#otherresults>.label").text(Strings.get("TabView", "searchOtherWindowTabs"));
-
-		matcher.doSearch(TabHandlers.onMatch, TabHandlers.onUnmatch, TabHandlers.onOther);
+			let term = this.searchquery.value;
+			if(this._lastSearch) {
+				if(term == this._lastSearch.term) { return; }
+				this._lastSearch.cancel();
+			}
+			this._lastSearch = new TabMatcher(term);
+			this._lastSearch.doSearch(this);
+		}, 300);
 	},
 
 	// Ensures the search feature is displayed.  If not, display it.
 	// Parameters:
 	//  - a boolean indicates whether this is triggered by a keypress or not
 	ensureShown: function(activatedByKeypress) {
-		let $search = iQ("#search");
-		let $searchShade = iQ("#searchshade");
-		let $searchbox = iQ("#searchbox");
-		iQ("#searchbutton").css({ opacity: 1 });
+		this._initiatedByKeypress = !!activatedByKeypress;
 
-		if(!this.isEnabled()) {
-			$searchShade.show();
-			$search.show();
-
-			if(DARWIN) {
-				UI.setTitlebarColors({active: "#717171", inactive: "#EDEDED"});
-			}
+		if(!this.inSearch) {
+			this.inSearch = true;
+			this._activeTab = UI.getActiveTab();
+			this.applyMode();
 
 			if(activatedByKeypress) {
 				// set the focus so key strokes are entered into the textbox.
-				$searchbox[0].focus();
-				dispatch(window, { type: "tabviewsearchenabled", cancelable: false, bubbles: false });
+				this.focus();
 			} else {
-				// marshal the focusing, otherwise it ends up with searchbox[0].focus gets called before the search button gets the focus after being pressed.
-				aSync(function() {
-					$searchbox[0].focus();
-					dispatch(window, { type: "tabviewsearchenabled", cancelable: false, bubbles: false });
+				// marshal the focusing, otherwise it ends up with searchquery.focus gets called before the search button gets the focus after being pressed.
+				aSync(() => {
+					this.focus();
 				}, 0);
 			}
 		}
+	},
+
+	// Switch between showing the results in a list overlayed over the tabs, or highlighting the tab items themselves.
+	applyMode: function() {
+		if(this.inSearch) {
+			setAttribute(document.body, 'searching', Prefs.searchMode);
+
+			if(Prefs.searchMode == 'highlight') {
+				// Make sure to have the top (technically current) result selected as the active tab.
+				if(this.searchquery.value.length) {
+					if(this.currentItem && this.currentItem.isATabItem) {
+						this.setActive(this.currentItem._tabItem);
+					} else {
+						UI.clearActiveTab();
+					}
+				}
+
+				// Restore the position of the searchbox if placed before by the user.
+				let position = this._position && new Point(this._position);
+				if(!position) {
+					// There's no user-saved position (i.e. first time opening search in this window).
+					// So figure out what the best default placement should be.
+					position = this.defaultPosition();
+				}
+
+				this.$searchbox.css(position);
+
+				// In case the window dimensions changed, the saved position could not be valid anymore, in which case we snap them to the closest valid position available.
+				this.snapToView();
+				this.savePosition();
+			}
+			else {
+				// The manual placement of the searchbox can't be used while in list mode, the search box is always in the same place there.
+				this.resetPosition();
+			}
+		}
+	},
+
+	toggleMode: function() {
+		// We toggle between two available modes: "list" and "highlight".
+		// I could have made this into a boolean, but meh.
+		if(Prefs.searchMode == 'list') {
+			Prefs.searchMode = 'highlight';
+		} else {
+			Prefs.searchMode = 'list';
+		}
+	},
+
+	// Focuses the search box and selects its contents.
+	focus: function(noSelect) {
+		if(!noSelect) {
+			this.searchquery.select();
+		}
+		this.searchquery.focus();
+		dispatch(window, { type: "tabviewsearchenabled", cancelable: false, bubbles: false });
+	},
+
+	snapToView: function() {
+		let css = {};
+		let bounds = GroupItems.getSafeWindowBounds();
+		let box = this.$searchbox.bounds();
+
+		if(box.top < bounds.top) {
+			css.top = bounds.top;
+		} else if(box.bottom > bounds.bottom) {
+			css.top = bounds.height - box.height;
+		}
+
+		if(box.left < bounds.left) {
+			css.left = bounds.left;
+		} else if(box.right > bounds.right) {
+			css.left = bounds.width - box.width;
+		}
+
+		if(!Utils.isEmptyObject(css)) {
+			this.$searchbox.css(css);
+		}
+	},
+
+	resetPosition: function() {
+		this.$searchbox.css({
+			top: null,
+			left: null
+		});
+	},
+
+	defaultPosition: function() {
+		let bounds = GroupItems.getSafeWindowBounds();
+		let box = this.$searchbox.bounds();
+		return new Point(bounds.width - box.width - 5, 60);
+	},
+
+	savePosition: function() {
+		let position = this.$searchbox.position();
+		if(!this._position || this._position.x != position.x || this._position.y != position.y) {
+			this._position = position;
+			UI._save();
+		}
+	},
+
+	fragmentGroup: function() {
+		if(!this._fragmentGroup) {
+			let container = document.createElement('div');
+			container.classList.add('search-result-group');
+
+			let title = document.createElement('span');
+			title.classList.add('search-result-group-title');
+			container.appendChild(title);
+
+			let tabContainer = document.createElement('div');
+			tabContainer.classList.add("tab-container");
+			tabContainer.classList.add("noThumbs");
+			container.appendChild(tabContainer);
+
+			this._fragmentGroup = container;
+		}
+
+		let container = this._fragmentGroup.cloneNode(true);
+		let title = container.firstChild;
+		let tabContainer = title.nextSibling;
+
+		return { container, title, tabContainer };
+	},
+
+	fragmentResult: function() {
+		if(!this._fragmentResult) {
+			let div = document.createElement("div");
+			div.classList.add("tab");
+			div.setAttribute('draggable', 'true');
+
+			let faviconContainer = document.createElement('div');
+			faviconContainer.classList.add('favicon-container');
+			div.appendChild(faviconContainer);
+
+			let favicon = document.createElement('div');
+			favicon.classList.add('favicon');
+			faviconContainer.appendChild(favicon);
+
+			let label = document.createElement('span');
+			label.classList.add('tab-label');
+			div.appendChild(label);
+
+			let title = document.createElement('span');
+			title.classList.add('tab-title');
+			title.textContent = ' ';
+			label.appendChild(title);
+
+			let separator = document.createElement('span');
+			separator.classList.add('tab-label-separator');
+			separator.textContent = ' - ';
+			label.appendChild(separator);
+
+			let url = document.createElement('span');
+			url.classList.add('tab-url');
+			label.appendChild(url);
+
+			let controls = document.createElement('div');
+			controls.classList.add('tab-result-buttons');
+			div.appendChild(controls);
+
+			let showBtn = document.createElement('div');
+			showBtn.classList.add('tab-setactive');
+			showBtn.setAttribute('title', Strings.get('TabView', 'showItemInGroupTooltip'));
+			controls.appendChild(showBtn);
+
+			let close = document.createElement('div');
+			close.classList.add('close');
+			setAttribute(close, "title", Strings.get("TabView", "closeTab"));
+			controls.appendChild(close);
+
+			this._fragmentResult = div;
+		}
+
+		let container = this._fragmentResult.cloneNode(true);
+		let favicon = container.firstChild.firstChild;
+		let title = container.firstChild.nextSibling.firstChild;
+		let url = title.nextSibling.nextSibling;
+		let showBtn = container.lastChild.firstChild;
+		let closeBtn = showBtn.nextSibling;
+
+		return { container, favicon, title, url, showBtn, closeBtn };
+	},
+
+	// Following comes the part that handles the search results and operations.
+
+	matches: new Map(),
+	groupsWithMatches: new Map(),
+	firstGroup: null,
+	lastGroup: null,
+	currentItem: null,
+	ordered: [],
+
+	handleSubscription: function(eventName, eventInfo) {
+		switch(eventName) {
+			case 'tabRemoved':
+				this.onUnmatch(eventInfo);
+				break;
+		}
+	},
+
+	focusItem: function(item) {
+		if(this.currentItem == item) { return; }
+
+		if(this.currentItem) {
+			this.currentItem.container.classList.remove('focus');
+		}
+		this.currentItem = item;
+		if(this.currentItem) {
+			this.currentItem.container.classList.add('focus');
+		}
+	},
+
+	setActive: function(tabItem) {
+		if(tabItem.isAnAppItem) {
+			UI._dontHideTabView = true;
+			UI.goToTab(tabItem.tab);
+		} else if(tabItem.isATabItem) {
+			UI.setActive(tabItem);
+		}
+	},
+
+	// Adds styles and event listeners to the matched tab items.
+	onMatch: function(tabItem, index) {
+		// Highlight the tabItem itself in TabView. Has to be compatible with appItems as well.
+		tabItem.container.classList.add('highlighted');
+		if(tabItem.parent.isAGroupItem) {
+			tabItem.parent.container.classList.add('hasHighlightedItems');
+			tabItem.parent.selector.classList.add('hasHighlightedItems');
+		}
+
+		// Add an entry for this tab and its parent group into the results list, in case the user wants to use that instead.
+		let group = this.groupsWithMatches.get(tabItem.parent);
+		if(!group) {
+			group = this.createGroupForMatches(tabItem.parent);
+			this.groupsWithMatches.set(tabItem.parent, group);
+		}
+
+		let order = index +1;
+		if(!group.order || group.order > order) {
+			group.order = order;
+			group.container.style.order = order;
+
+			if(!this.firstGroup || order < this.firstGroup.order) {
+				this.firstGroup = group;
+			}
+			if(!this.lastGroup || order > this.lastGroup.order) {
+				this.lastGroup = group;
+			}
+		}
+
+		group.tabs.add(tabItem);
+		let item = this.matches.get(tabItem);
+		if(!item) {
+			item = this.fragmentResult();
+			item.container._item = item;
+			item._tabItem = tabItem;
+			item._parent = tabItem.parent;
+			item.zoomIn = (e) => {
+				this.hide(e);
+				tabItem.zoomIn();
+			};
+			item.setActive = (e) => {
+				this.toggleMode();
+				this.setActive(tabItem);
+			};
+			item.handleEvent = function(e) {
+				switch(e.target) {
+					case item.showBtn:
+						this.setActive();
+						break;
+
+					case item.closeBtn: {
+						tabItem.close();
+						break;
+					}
+
+					case item.container:
+					default:
+						this.zoomIn();
+						break;
+				}
+			};
+			item.container.addEventListener('click', item);
+
+			let title = TabUtils.nameOf(tabItem);
+			let url = TabUtils.URLOf(tabItem);
+			let iconUrl = TabUtils.faviconURLOf(tabItem);
+			let tooltip = title;
+			if(title != url) {
+				tooltip += "\n" + url;
+			} else {
+				item.container.classList.add('onlyUrl');
+			}
+
+			item.title.textContent = title;
+			item.url.textContent = url;
+			item.container.setAttribute("title", tooltip);
+			if(iconUrl) {
+				item.favicon._iconUrl = iconUrl;
+				item.favicon.style.backgroundImage = 'url("'+iconUrl+'")';
+				item.container.classList.remove('noFavicon');
+			} else {
+				item.favicon._iconUrl = '';
+				item.favicon.style.backgroundImage = '';
+				item.container.classList.add('noFavicon');
+			}
+
+			this.matches.set(tabItem, item);
+			if(tabItem.isATabItem) {
+				tabItem.addSubscriber('tabRemoved', this);
+			}
+		}
+
+		if(group.tabContainer != item.container.parentNode) {
+			group.tabContainer.appendChild(item.container);
+		}
+		item.order = order;
+		item.container.style.order = order;
+
+		if(!this.currentItem || order < this.currentItem.order) {
+			if(this.currentItem) {
+				this.currentItem.container.classList.remove('focus');
+			}
+			this.currentItem = item;
+			item.container.classList.add('focus');
+		}
+
+		this.results.removeAttribute('empty');
+	},
+
+	// Removes styles and event listeners from the unmatched tab items.
+	onUnmatch: function(tabItem) {
+		tabItem.container.classList.remove('highlighted');
+
+		let parent = tabItem.parent;
+
+		if(this.matches.has(tabItem)) {
+			let item = this.matches.get(tabItem);
+			item.container.remove();
+			this.matches.delete(tabItem);
+			if(tabItem.isATabItem) {
+				tabItem.removeSubscriber('tabRemoved', this);
+			}
+
+			if(!parent) {
+				parent = item._parent;
+			}
+		}
+
+		if(this.groupsWithMatches.has(parent)) {
+			let group = this.groupsWithMatches.get(parent);
+			group.tabs.delete(tabItem);
+			if(!group.tabs.size) {
+				group.container.remove();
+				this.groupsWithMatches.delete(parent);
+				if(!this.groupsWithMatches.size) {
+					this.results.setAttribute('empty', 'true');
+					document.body.classList.remove('searched');
+				}
+
+				if(parent.isAGroupItem) {
+					parent.container.classList.remove('hasHighlightedItems');
+					parent.selector.classList.remove('hasHighlightedItems');
+				}
+			}
+		}
+	},
+
+	createGroupForMatches: function(groupItem) {
+		let { container, title, tabContainer } = this.fragmentGroup();
+
+		if(groupItem.isAGroupItem) {
+			title.textContent = groupItem.getTitle(true);
+			title.classList[title.textContent == groupItem.defaultName ? 'add' : 'remove']('unnamed-group');
+		}
+		else if(groupItem == PinnedItems.tray) {
+			title.textContent = Strings.get('TabView', 'pinnedItemsGroup');
+			title.classList.add('unnamed-group');
+		}
+
+		let group = {
+			tabs: new Set(),
+			order: 0,
+			groupItem, container, title, tabContainer
+		};
+		this.results.appendChild(group.container);
+		return group;
+	},
+
+	clearSearch: function(endSearch) {
+		this.firstGroup = null;
+		this.lastGroup = null;
+		this.focusItem(null);
+		this.ordered = [];
+
+		if(endSearch) {
+			for(let tab of this.matches.keys()) {
+				this.onUnmatch(tab);
+			}
+			this._lastSearch = null;
+			this.searchquery.value = "";
+
+			// Stacked groups should restack the active tab rather than only the highlighted tabs when ending a search.
+			GroupItems.arrangeAllGroups();
+
+			document.body.classList.remove('searched');
+		}
+		else {
+			for(let group of this.groupsWithMatches.values()) {
+				group.order = 0;
+				group.container.style.order = '';
+			}
+		}
+	},
+
+	finishSearch: function() {
+		let groups = [];
+		for(let group of this.groupsWithMatches.values()) {
+			group.container.classList[group == this.firstGroup ? 'add' : 'remove']('first-child');
+			group.container.classList[group == this.lastGroup ? 'add' : 'remove']('last-child');
+			groups.push(group);
+		}
+		groups.sort(function(a,b) { return a.order - b.order; });
+
+		for(let group of groups) {
+			let tabItems = [];
+			for(let tab of group.tabs) {
+				let item = this.matches.get(tab);
+				tabItems.push(item);
+			}
+			tabItems.sort(function(a,b) { return a.order - b.order; });
+
+			for(let tabItem of tabItems) {
+				this.ordered.push(tabItem);
+			}
+		}
+
+		// Stacked groups should stack only the highlighted tabs when performing a search.
+		GroupItems.arrangeAllGroups();
+
+		// Make sure to have the top (technically current) result selected as the active tab.
+		if(this.searchquery.value.length) {
+			document.body.classList.add('searched');
+			if(Prefs.searchMode == 'highlight') {
+				if(this.currentItem) {
+					this.setActive(this.currentItem._tabItem);
+				} else {
+					UI.clearActiveTab();
+				}
+			}
+		} else {
+			document.body.classList.remove('searched');
+		}
 	}
 };
-
